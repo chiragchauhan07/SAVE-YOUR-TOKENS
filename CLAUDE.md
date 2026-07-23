@@ -27,16 +27,21 @@ replacement for one.
 3. **Determinism.** Two scans of an unchanged repository must produce identical
    output. Sort before returning. Never let dict or filesystem ordering leak
    into results.
-4. **Content reading is metadata-only.** The Phase 1 scanner never opens a
-   file. Phase 2 detectors may read *manifests* (`pyproject.toml`,
-   `package.json`, lockfiles, well-known config files) via
-   `analyzer/detectors/manifests.py` — but never application source code. No
-   AST, no import scanning, no inspection of function bodies. See D-011.
+4. **Content reading is metadata/structure-only, never execution.** The Phase
+   1 scanner never opens a file. Phase 2 detectors read *manifests*
+   (`pyproject.toml`, `package.json`, lockfiles) via
+   `analyzer/detectors/manifests.py`. Phase 3's `analyzer/intelligence/`
+   parses application Python source with `ast` — but no module in this
+   project ever `import`s, `exec`s or `eval`s anything from the analyzed
+   repository, and no function/method *body* is inspected for business
+   logic (a route handler's name is recorded; what it does is not). See
+   D-011, D-018.
 5. **Stay in phase.** Do not implement future phases early. Leave a `TODO` or a
    note in `docs/ROADMAP.md` instead.
 6. **Never guess.** Every detector attaches confidence and evidence to what it
    reports, and reports nothing when it has neither. "Unknown" / an empty
-   result is always valid.
+   result is always valid. A conventional file name alone is never enough —
+   it's corroboration for real evidence, not a substitute for it (D-022).
 
 ## Layout
 
@@ -44,7 +49,9 @@ replacement for one.
 analyzer/          The reusable engine. No MCP, no CLI, no I/O beyond reading.
   constants.py     Phase 1 ignore rules as data.
   models.py        Frozen dataclasses: FileInfo, RepositoryStats, Project,
-                    Detection, Confidence, LanguageStat.
+                    Detection, Confidence, LanguageStat, EntryPoint,
+                    ImportEdge, ModuleInfo, Route, DatabaseModel,
+                    ModuleDependency, ImportantFile.
   scanner.py       Phase 1: the repository walk.
   utils.py         Small shared helpers.
   detectors/       Phase 2: identify what the scanned repository is.
@@ -56,6 +63,15 @@ analyzer/          The reusable engine. No MCP, no CLI, no I/O beyond reading.
     environment_detector.py, repository_classifier.py
                          One narrow question each; see each module's docstring.
     __init__.py          identify_project() orchestrates all of the above.
+  intelligence/    Phase 3: understand the repository's internal Python
+                    structure (never business logic). Python only for now.
+    common.py            parse_python_files() + shared AST-name helpers.
+    entrypoints.py, imports.py, modules.py, routes.py, database.py,
+    authentication.py, configuration.py, relationships.py, importance.py
+                         One narrow question each; see each module's docstring.
+    __init__.py          analyze_intelligence() orchestrates all of the above;
+                         must run after identify_project() (reads Project.
+                         frameworks / .environment_files).
 cli.py             Thin CLI over the engine. For inspection, not the product.
 server.py          MCP entry point. Placeholder until Phase 5.
 tests/             pytest, no fixtures beyond tmp_path.
@@ -65,14 +81,18 @@ docs/              Architecture, roadmap, decisions, standards.
 
 ## Current state
 
-**Phase 1 and Phase 2 are complete.** The engine scans a repository (Phase 1)
-and identifies what it is — languages, frameworks, package managers, build
-tools, CI/CD, containerization, environment surfaces, overall repository type
-(Phase 2). `analyzer.analyze_repository()` is the one-call composition of
-both; `Project` is the contract every later phase consumes.
+**Phase 1, 2 and 3 are complete.** The engine scans a repository (Phase 1),
+identifies what it is — languages, frameworks, package managers, build
+tools, CI/CD, containerization, environment surfaces, overall repository
+type (Phase 2) — and understands its internal Python structure: entry
+points, import graph, module metadata, routes, database models,
+authentication, configuration, module dependencies, evidence-ranked
+important files (Phase 3). `analyzer.analyze_repository()` is the one-call
+composition of all three; `Project` is the contract every later phase
+consumes.
 
-Phase 3 (deep analysis: entry points, API routes, database layer) is next.
-See `docs/ROADMAP.md`.
+Phase 4 (context generation: writing the `.ai-context/` Markdown pack) is
+next. See `docs/ROADMAP.md`.
 
 ## Conventions
 
@@ -89,7 +109,25 @@ See `docs/ROADMAP.md`.
 - Detection evidence tables (`analyzer/detectors/signatures.py`) are data,
   not logic — same principle as `analyzer/constants.py` (D-006). Add a new
   language/framework/tool there, not in a detector function.
+- Phase 3 parses Python with `ast` (stdlib). No source is ever executed —
+  no `import`, `exec`, `eval` of analyzed repository code, ever (D-018).
 - Docstrings explain *why*; the code already says *what*.
+
+## Verifying packaging changes
+
+Editable installs (`pip install -e .`) and pytest's `pythonpath = ["."]`
+both bypass `pyproject.toml`'s package list and read straight from the
+source tree — they will not catch a subpackage silently missing from a real
+build (this happened twice: `analyzer.detectors` and `analyzer.intelligence`
+were both absent from actual wheels for a full phase before anyone noticed;
+see D-025). Before changing anything under `[tool.setuptools]`, or after
+adding a new subpackage, verify with an actual build:
+
+```bash
+python -m pip install build -q
+python -m build --wheel -o /tmp/dist-check
+unzip -l /tmp/dist-check/*.whl   # confirm every subpackage is listed
+```
 
 Full detail in `docs/CODING_STANDARDS.md`.
 

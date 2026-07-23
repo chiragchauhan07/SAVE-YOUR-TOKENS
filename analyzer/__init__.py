@@ -12,25 +12,41 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from analyzer.detectors import identify_project
+from analyzer.intelligence import analyze_intelligence
 from analyzer.models import (
     Confidence,
+    DatabaseModel,
     Detection,
+    EntryPoint,
     FileInfo,
+    ImportantFile,
+    ImportEdge,
     LanguageStat,
+    ModuleDependency,
+    ModuleInfo,
     Project,
     RepositoryStats,
+    Route,
 )
 from analyzer.scanner import scan_repository
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "Confidence",
+    "DatabaseModel",
     "Detection",
+    "EntryPoint",
     "FileInfo",
+    "ImportEdge",
+    "ImportantFile",
     "LanguageStat",
+    "ModuleDependency",
+    "ModuleInfo",
     "Project",
     "RepositoryStats",
+    "Route",
+    "analyze_intelligence",
     "analyze_repository",
     "identify_project",
     "scan_repository",
@@ -45,12 +61,13 @@ def analyze_repository(
     include_hidden: bool = False,
     follow_symlinks: bool = False,
 ) -> Project:
-    """Scan and identify a repository in one call.
+    """Scan, identify and analyse a repository in one call.
 
-    Equivalent to ``identify_project(scan_repository(root, ...))`` — the
-    composition most callers (CLI, future MCP tools) actually want. Kept as
-    two separately testable functions rather than merged, since "walk the
-    tree" and "identify what's in it" are different concerns.
+    Equivalent to ``analyze_intelligence(identify_project(scan_repository(root,
+    ...)))`` — the composition most callers (CLI, future MCP tools) actually
+    want. Kept as three separately testable functions rather than merged,
+    since "walk the tree", "identify what's in it" and "understand its
+    internal structure" are different concerns.
     """
     project = scan_repository(
         root,
@@ -58,4 +75,5 @@ def analyze_repository(
         include_hidden=include_hidden,
         follow_symlinks=follow_symlinks,
     )
-    return identify_project(project)
+    project = identify_project(project)
+    return analyze_intelligence(project)

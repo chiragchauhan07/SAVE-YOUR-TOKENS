@@ -7,8 +7,90 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Phase 3 — deep analysis (entry points, API routes, database layer). See
+Phase 4 — context generation (`.ai-context/` Markdown pack). See
 [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## [0.3.0] — 2026-07-23
+
+Phase 3: the Code Intelligence Engine. Turns an identified `Project` into
+structured knowledge of its internal Python architecture — entry points,
+import graph, per-module metadata, API routes, database models,
+authentication, configuration, module dependencies, and evidence-ranked
+important files. Static `ast` analysis only; no source execution, no
+inspection of function bodies for business logic.
+
+### Added
+
+- `analyzer/intelligence/` — nine modules (`entrypoints`, `imports`,
+  `modules`, `routes`, `database`, `authentication`, `configuration`,
+  `relationships`, `importance`), plus `common.py` for shared AST parsing.
+  Python only, by design extensible to other languages without changing
+  existing modules — see `docs/ARCHITECTURE.md`.
+- New models: `EntryPoint`, `ImportEdge`, `ModuleInfo`, `Route`,
+  `DatabaseModel`, `ModuleDependency`, `ImportantFile`. `Detection` (from
+  Phase 2) is reused for `authentication` and `configuration` rather than
+  adding two more bespoke types.
+- `Project` gains `entry_points`, `modules`, `imports`, `circular_imports`,
+  `routes`, `database_models`, `authentication`, `configuration`,
+  `module_dependencies` and `important_files` — all additive, defaulting to
+  empty.
+- `analyzer.analyze_intelligence()`; `analyzer.analyze_repository()` now
+  chains scan → identify → analyze in one call.
+- Entry point detection: `if __name__ == "__main__":` guards,
+  `FastAPI()`/`Flask()` app objects (with `uvicorn.run()`/`include_router()`
+  as corroborating evidence), Django's `manage.py`.
+- Import graph with internal/external classification and circular-import
+  detection, correctly handling absolute imports, relative imports at any
+  nesting depth, and the `from package import name` submodule-vs-attribute
+  ambiguity (see Fixed, below).
+- Per-module structural metadata: classes, functions, async functions,
+  UPPER_CASE constants, exports (`__all__` or public names).
+- Route detection for FastAPI/Flask decorators and Django `urls.py`.
+- Database model detection for SQLAlchemy (1.x and 2.x styles), Pydantic,
+  and Django ORM — model name, table name, fields.
+- Authentication detection: JWT, OAuth, API keys, session auth, FastAPI
+  `Depends()` correlated to a known security scheme, authentication
+  middleware (Starlette-style `add_middleware` and Django's `MIDDLEWARE`).
+- Configuration detection: settings modules, `BaseSettings`/`Config`/
+  `Settings` classes, `os.environ`/`os.getenv` usage, dotenv usage.
+- Evidence-based important-file ranking: entry point presence, import
+  fan-in, route/model count and naming convention, each signal capped so no
+  single dimension dominates; applies to every Python file, not only ones
+  that already have another signal attached.
+- CLI `scan` output now includes Entry Points, Backend Routes, Database
+  Models, Authentication, Main Configuration, Important Files and
+  Dependency Relationships sections; `--json` carries the full structured
+  data for every Phase 3 field.
+- 44 new unit tests: FastAPI/Flask/Django/CLI applications, malformed
+  Python (syntax errors are skipped, never fatal), circular imports, nested
+  packages, empty repositories.
+
+### Fixed
+
+- **Import resolution false-positive cycles.** `from package import name`
+  was resolving every such import straight to the package's `__init__.py`,
+  regardless of whether `name` was actually a submodule. This fabricated
+  circular-import reports that don't exist at runtime — caught by
+  dogfooding the tool against its own repository, where every detector
+  submodule appeared to circularly import `analyzer/detectors/__init__.py`.
+  Fixed with two-tier resolution: try `name` as a submodule first, fall
+  back to the package's own module file only if no such submodule exists.
+- **Packaging silently dropped both Phase 2 and Phase 3 subpackages from
+  real builds.** `pyproject.toml`'s explicit `packages = ["analyzer"]` list
+  never included `analyzer.detectors` or `analyzer.intelligence` — invisible
+  locally because editable installs and pytest's `pythonpath` both bypass
+  the packages list, only surfaced by building an actual wheel and
+  inspecting its contents. Fixed with `[tool.setuptools.packages.find]`
+  auto-discovery.
+
+### Notes
+
+- Still no LLM anywhere. Still no source code is ever executed, imported,
+  `eval`'d or `exec`'d — everything is static `ast` analysis.
+- Still no new runtime dependencies.
+- Absolute import resolution assumes the repository root is the import
+  root; `src/`-layout projects under-resolve. A deliberate simplification,
+  not a bug — see D-019.
 
 ## [0.2.0] — 2026-07-23
 
@@ -104,6 +186,7 @@ Phase 1: the repository analysis foundation.
 - File contents are not read in this phase; the scanner reports facts about
   files, not conclusions about the project.
 
-[Unreleased]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/releases/tag/v0.1.0

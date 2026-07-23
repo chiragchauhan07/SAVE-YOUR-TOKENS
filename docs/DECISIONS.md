@@ -336,3 +336,203 @@ label.
 **Consequence.** A project with both shows "Docker" under Build and "Docker
 Compose" under Containerization — two lines, not a merged one. This matches
 the identity-card example in the Phase 2 spec exactly.
+
+---
+
+## D-018 — Static analysis only: `ast`, never execution
+
+**Context.** Understanding a repository's real behaviour is easiest by
+running it — importing modules, introspecting live objects.
+
+**Decision.** `analyzer/intelligence/` uses only the standard library `ast`
+module. Nothing in the target repository is ever imported, `exec`'d,
+`eval`'d, or otherwise executed.
+
+**Why.** Executing arbitrary repository code is a code-execution
+vulnerability by construction — this tool's whole premise is running
+*unattended* over any repository handed to it. It also breaks
+determinism (import side effects, network calls, missing dependencies) and
+the "no LLM / no execution" philosophy carried from Phase 1.
+
+**Consequence.** Some facts that execution would reveal trivially (the
+actual resolved value of a decorator argument built from a function call,
+for instance) are simply out of reach. Where `ast` can't determine a fact
+confidently, the answer is "not detected", never a guess.
+
+---
+
+## D-019 — Absolute import resolution assumes the repository root is the import root
+
+**Context.** `import a.b.c` / `from a.b import c` need a base directory to
+resolve against. Real Python resolves these against `sys.path`, which
+depends on how the project is actually run or packaged (plain script,
+installed package, `src/` layout with build-tool path injection) —
+information this tool cannot obtain without executing the project's own
+build configuration.
+
+**Decision.** Absolute imports resolve against the repository root only. A
+`src/`-layout project's absolute imports (meant to resolve against `src/`
+on `sys.path`) will show as external/unresolved.
+
+**Why.** Guessing the real import root would itself be a guess — exactly
+what the philosophy forbids. The root-relative rule is simple, deterministic,
+and correct for the common case (flat-layout and most framework-generated
+projects).
+
+**Consequence.** `src/`-layout projects under-report internal imports and
+module dependencies. Acceptable for now; a future improvement could detect
+a `src/` layout from `pyproject.toml`'s own `[tool.setuptools]`/hatchling
+configuration (itself declarative, not executed) and try both roots.
+
+---
+
+## D-020 — Django routes are read only from files named `urls.py`
+
+**Context.** Django's `path()`/`re_path()`/`url()` functions could
+theoretically appear anywhere.
+
+**Decision.** `routes.py` only inspects files literally named `urls.py`.
+
+**Why.** This is Django's near-universal, framework-enforced convention —
+URL configuration lives in `urls.py` modules by design, referenced from
+`ROOT_URLCONF`. Scanning every `.py` file for a call named `path` risks
+false positives from unrelated code (`pathlib.Path` misuse, a local
+variable, an unrelated third-party API). Django doesn't declare an HTTP
+method at the URL-conf level either — that's decided by the view's method
+handlers, which is behaviour, not structure, so Django routes report
+method `"ANY"`.
+
+**Consequence.** A Django project that defines `path()` calls outside a
+`urls.py`-named file (unusual, against convention) won't be detected. This
+is the right trade-off for precision over recall here.
+
+---
+
+## D-021 — `from package import name` resolves ``name`` as a submodule before falling back to the package's `__init__.py`
+
+**Context.** `from analyzer.detectors import manifests` could mean two
+different things: `manifests` is a submodule (`analyzer/detectors/manifests.py`)
+or `manifests` is an attribute defined inside `analyzer/detectors/__init__.py`.
+An early implementation resolved every such import straight to the
+package's `__init__.py`, which fabricated import cycles that don't exist at
+runtime — every submodule importing anything from its own package's
+`__init__.py`-exposed namespace looked, incorrectly, like it imported the
+`__init__.py` itself, and the `__init__.py` importing that submodule closed
+a "cycle" that was never really there (found via dogfooding: scanning this
+project's own repository reported `detectors/__init__.py` as circularly
+importing every one of its own detector submodules).
+
+**Decision.** Resolution is two-tier: try `name` as a submodule of the
+target package first (`_resolve_from_name` in `imports.py`); only fall back
+to the package's own `__init__.py`/module file if no such submodule exists.
+
+**Why.** This mirrors what CPython's import machinery actually does — `from
+package import submodule` imports the submodule (setting it as an attribute
+of the partially-initialized package) without re-running `__init__.py`.
+Resolving to `__init__.py` unconditionally was a plausible-looking but wrong
+static-analysis shortcut, and false-positive circular-import reports are
+exactly the kind of unsupported-fact the "never guess" rule exists to
+prevent.
+
+**Consequence.** Every `ImportFrom` statement now produces one `ImportEdge`
+per imported name (not one per statement) — accurate, but the edge count
+for `from x import a, b, c` is 3, not 1. `analyze_imports()`'s docstring and
+tests cover this explicitly.
+
+---
+
+## D-022 — Entry points require direct evidence; a conventional filename is corroboration, never sufficient on its own
+
+**Context.** The Phase 3 spec's entry-point examples list filenames
+(`main.py`, `app.py`, `run.py`) alongside AST-level signals (`FastAPI()`,
+`if __name__ == "__main__":`).
+
+**Decision.** A file is only reported as an entry point when it has direct
+AST evidence: an `if __name__ == "__main__":` guard, a `FastAPI()`/`Flask()`
+object assignment, or (for Django) is literally named `manage.py`. A
+conventional filename alone, with neither, produces no `EntryPoint`.
+
+**Why.** A file named `main.py` with no guard and no framework app object
+gives no actual evidence it's ever invoked as a program's starting point —
+reporting it anyway would be exactly the kind of guess the philosophy
+forbids. Where the filename convention *does* co-occur with real evidence,
+it's included as an extra evidence line (not a separate, weaker detection).
+
+**Consequence.** `EntryPoint` has no "weak/filename-only" tier; every
+reported entry point is HIGH confidence, because everything reported has
+unambiguous supporting evidence by construction.
+
+---
+
+## D-023 — Database model classification requires a specific, qualified base class name
+
+**Context.** `class Foo(Model):` could be Django's `models.Model`,
+something else's `Model`, or a project-local base class that happens to be
+named `Model`.
+
+**Decision.** Only bases with a resolvable, well-known qualifier are
+classified: `models.Model` (Django), `db.Model` (Flask-SQLAlchemy),
+`BaseModel` (Pydantic), `Base`/`DeclarativeBase` (SQLAlchemy declarative). A
+bare, unqualified `Model` with none of these markers is not classified as
+anything.
+
+**Why.** The bare name is genuinely ambiguous without executing the code to
+see what it actually resolves to (which this tool never does — D-018).
+Reporting a guess here would misrepresent a repository's actual database
+layer, which is worse than reporting nothing.
+
+**Consequence.** A codebase with an unconventional import alias (`from
+django.db import models as m; class Foo(m.Model)`) won't be detected. This
+is an accepted, documented gap — real-world Django code overwhelmingly uses
+the `models.Model` convention.
+
+---
+
+## D-024 — Important-file scoring is additive, per-signal-capped, and applies to every Python file
+
+**Context.** Ranking could reward one dominant signal (e.g. raw import
+fan-in) or hand-pick "important" names.
+
+**Decision.** `importance.py` sums independent, named signals — entry
+point, import fan-in, route count, database-model count, conventional
+filename, conventional directory — each capped at 5 points, computed for
+every Python file in the repository (not only files that already show up
+in some other detector's output).
+
+**Why.** No single signal should dominate (a 50-fan-in utility module
+shouldn't automatically outrank a file with three different, meaningful
+signals). Scoring every Python file — not just ones with fan-in/routes/
+models already attached — matters concretely: a `config.py` nothing yet
+imports would otherwise be silently excluded from ranking entirely rather
+than scored low. No file name specific to one project is ever
+special-cased; every signal is a named, general convention.
+
+**Consequence.** The score is a relative ranking signal, not an absolute
+metric — "higher score, more evidence of importance" is the only claim it
+makes.
+
+---
+
+## D-025 — Packaging: `packages.find` auto-discovery, not an explicit list
+
+**Context.** `pyproject.toml` listed `packages = ["analyzer"]` explicitly.
+Building a real (non-editable) wheel and inspecting its contents during
+this phase's verification showed the explicit list silently dropped
+`analyzer.detectors` and `analyzer.intelligence` entirely — both subpackages
+were missing from the built wheel, though every local test passed, because
+editable installs and `pythonpath = ["."]` test discovery both bypass the
+`packages` list and read straight from the source tree.
+
+**Decision.** Switched to `[tool.setuptools.packages.find]` with `include =
+["analyzer*"]`, which discovers `analyzer` and every subpackage under it
+automatically.
+
+**Why.** An explicit list is a maintenance trap: it silently breaks on the
+next new subpackage, and nothing in the normal dev loop (editable install,
+`pytest`, running `cli.py` directly) would ever catch it — exactly what
+happened here across two phases before a real wheel build surfaced it.
+
+**Consequence.** Verifying packaging now requires an actual wheel build
+(`python -m build --wheel`), not just an editable install — added to the
+release checklist in `docs/CONTRIBUTING.md`'s spirit; do this before any
+future package boundary change.

@@ -1,10 +1,12 @@
 """Command-line interface for the Save your Tokens analysis engine.
 
-Exposes a single command, ``scan``, which scans a repository and identifies
-it: languages, frameworks, package managers, build tools, CI/CD,
-containerization and configuration surfaces. It exists to exercise and
-inspect the engine; it is not the product. The MCP server (see
-``server.py``) is the primary interface.
+Exposes a single command, ``scan``, which scans a repository, identifies it
+(languages, frameworks, package managers, build tools, CI/CD,
+containerization, configuration surfaces) and analyses its internal Python
+structure (entry points, routes, database models, authentication,
+configuration, imports, dependency relationships, important files). It
+exists to exercise and inspect the engine; it is not the product. The MCP
+server (see ``server.py``) is the primary interface.
 
 Usage:
     python cli.py scan /path/to/repo
@@ -18,8 +20,24 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import Detection, LanguageStat, Project, __version__, analyze_repository
+from analyzer import (
+    DatabaseModel,
+    Detection,
+    EntryPoint,
+    ImportantFile,
+    ImportEdge,
+    LanguageStat,
+    ModuleDependency,
+    ModuleInfo,
+    Project,
+    Route,
+    __version__,
+    analyze_repository,
+)
 from analyzer.utils import human_readable_size
+
+#: How many important files the human-readable summary lists.
+_TOP_IMPORTANT_FILES = 10
 
 #: How many extensions the human-readable summary lists.
 _TOP_EXTENSIONS = 15
@@ -110,6 +128,32 @@ def _print_summary(project: Project) -> None:
     _print_detections("Containerization", project.container_tools)
     _print_detections("Environment", project.environment_files)
 
+    if project.entry_points:
+        print("\nEntry Points:")
+        for entry_point in project.entry_points:
+            print(f"  {entry_point.file} ({entry_point.kind})")
+
+    if project.routes:
+        print(f"\nBackend Routes: {len(project.routes)}")
+
+    if project.database_models:
+        print(f"\nDatabase Models: {len(project.database_models)}")
+
+    _print_detections("Authentication", project.authentication)
+    _print_detections("Main Configuration", project.configuration)
+
+    if project.important_files:
+        print("\nImportant Files:")
+        for important_file in project.important_files[:_TOP_IMPORTANT_FILES]:
+            print(f"  {important_file.file}")
+
+    if project.circular_imports:
+        print(f"\nCircular Imports: {len(project.circular_imports)} detected")
+
+    if project.module_dependencies:
+        count = len(project.module_dependencies)
+        print(f"\nDependency Relationships: Available ({count})")
+
     stats = project.stats
     print(f"\nFiles      : {stats.total_files:,}")
     print(f"Directories: {stats.total_directories:,}")
@@ -156,6 +200,69 @@ def _language_dict(language: LanguageStat) -> dict:
     }
 
 
+def _entry_point_dict(entry_point: EntryPoint) -> dict:
+    return {
+        "file": str(entry_point.file),
+        "kind": entry_point.kind,
+        "symbol": entry_point.symbol,
+        "confidence": entry_point.confidence.name,
+        "evidence": list(entry_point.evidence),
+    }
+
+
+def _route_dict(route: Route) -> dict:
+    return {
+        "method": route.method,
+        "path": route.path,
+        "handler": route.handler,
+        "file": str(route.file),
+        "framework": route.framework,
+    }
+
+
+def _database_model_dict(model: DatabaseModel) -> dict:
+    return {
+        "name": model.name,
+        "orm": model.orm,
+        "table_name": model.table_name,
+        "file": str(model.file),
+        "fields": list(model.fields),
+        "evidence": list(model.evidence),
+    }
+
+
+def _module_dict(module: ModuleInfo) -> dict:
+    return {
+        "file": str(module.file),
+        "classes": list(module.classes),
+        "functions": list(module.functions),
+        "async_functions": list(module.async_functions),
+        "constants": list(module.constants),
+        "exports": list(module.exports),
+    }
+
+
+def _import_edge_dict(edge: ImportEdge) -> dict:
+    return {
+        "file": str(edge.file),
+        "module": edge.module,
+        "is_internal": edge.is_internal,
+        "resolved_file": str(edge.resolved_file) if edge.resolved_file else None,
+    }
+
+
+def _module_dependency_dict(dependency: ModuleDependency) -> dict:
+    return {"source": str(dependency.source), "target": str(dependency.target)}
+
+
+def _important_file_dict(important_file: ImportantFile) -> dict:
+    return {
+        "file": str(important_file.file),
+        "score": important_file.score,
+        "reasons": list(important_file.reasons),
+    }
+
+
 def _as_dict(project: Project) -> dict:
     """Convert an analysis result to JSON-serialisable primitives."""
     stats = project.stats
@@ -174,6 +281,18 @@ def _as_dict(project: Project) -> dict:
         "ci_providers": [_detection_dict(d) for d in project.ci_providers],
         "container_tools": [_detection_dict(d) for d in project.container_tools],
         "environment_files": [_detection_dict(d) for d in project.environment_files],
+        "entry_points": [_entry_point_dict(ep) for ep in project.entry_points],
+        "modules": [_module_dict(m) for m in project.modules],
+        "imports": [_import_edge_dict(edge) for edge in project.imports],
+        "circular_imports": [list(cycle) for cycle in project.circular_imports],
+        "routes": [_route_dict(r) for r in project.routes],
+        "database_models": [_database_model_dict(m) for m in project.database_models],
+        "authentication": [_detection_dict(d) for d in project.authentication],
+        "configuration": [_detection_dict(d) for d in project.configuration],
+        "module_dependencies": [
+            _module_dependency_dict(dep) for dep in project.module_dependencies
+        ],
+        "important_files": [_important_file_dict(f) for f in project.important_files],
         "stats": {
             "total_files": stats.total_files,
             "total_directories": stats.total_directories,

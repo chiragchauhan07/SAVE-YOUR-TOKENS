@@ -5,11 +5,11 @@
 Turn a software repository into a compact, structured briefing that an AI
 coding agent can read in seconds instead of rediscovering by search.
 
-> **Status: Phase 2 — Project Identification Engine.** The repository scanner
-> and the identification detectors (languages, frameworks, package managers,
-> build tools, CI/CD, containerization, environment surfaces, repository
-> classification) are implemented and tested. Context generation and the MCP
-> server are not built yet. See the [Roadmap](#roadmap).
+> **Status: Phase 3 — Code Intelligence Engine.** The repository scanner,
+> identification detectors, and Python code intelligence (entry points,
+> routes, database models, authentication, configuration, import graph,
+> important-file ranking) are implemented and tested. Context generation and
+> the MCP server are not built yet. See the [Roadmap](#roadmap).
 
 ---
 
@@ -62,7 +62,7 @@ the core.
 
 ## Features
 
-**Available now (Phase 1 + 2)**
+**Available now (Phase 1 + 2 + 3)**
 
 - Recursive repository scanning with directory pruning
 - Deterministic, sorted, reproducible output
@@ -78,12 +78,16 @@ the core.
 - Build tool, CI/CD, containerization and configuration-surface detection
 - Repository classification (Full Stack Web App, REST API, Frontend, Mobile
   App, Monorepo, CLI Tool, Python Library, AI/ML Project, Unknown)
+- Python code intelligence via `ast` analysis (no source execution):
+  entry points, import graph with circular-import detection, per-module
+  metadata, FastAPI/Flask/Django routes, SQLAlchemy/Pydantic/Django ORM
+  models, authentication mechanisms, configuration surfaces, module
+  dependency relationships, evidence-ranked important files
 - Typed `Project` model as the engine's public contract
 - CLI with human and JSON output
 
 **Planned**
 
-- Entry point, API route and database discovery (Phase 3)
 - Context file generation (Phase 4)
 - MCP server (Phase 5)
 
@@ -135,6 +139,26 @@ Environment:
   .env.example
   compose.yaml
 
+Entry Points:
+  app/main.py (fastapi_app)
+
+Backend Routes: 27
+
+Database Models: 12
+
+Authentication:
+  JWT
+
+Main Configuration:
+  Settings Module
+
+Important Files:
+  app/main.py
+  app/database.py
+  app/auth.py
+
+Dependency Relationships: Available (41)
+
 Files      : 284
 Directories: 46
 Total size : 1.8 MB
@@ -166,11 +190,15 @@ project = analyze_repository("/path/to/repository")
 print(project.repository_type)              # Detection(name='REST API', ...)
 print([f.name for f in project.frameworks])  # ['FastAPI']
 print(project.languages)                     # (LanguageStat(name='Python', ...), ...)
+print(project.routes)                        # (Route(method='GET', path='/users', ...), ...)
+print(project.entry_points)                  # (EntryPoint(kind='fastapi_app', ...), ...)
 
-# Or scan and identify as two separate steps:
-from analyzer import scan_repository, identify_project
+# Or run each phase separately:
+from analyzer import scan_repository, identify_project, analyze_intelligence
 
-project = identify_project(scan_repository("/path/to/repository"))
+project = scan_repository("/path/to/repository")
+project = identify_project(project)      # languages, frameworks, ...
+project = analyze_intelligence(project)  # entry points, routes, models, ...
 ```
 
 ## Architecture
@@ -179,6 +207,7 @@ project = identify_project(scan_repository("/path/to/repository"))
 Repository
     ↓
 Analysis Engine      ← analyzer/   (deterministic, no MCP, no LLM)
+                        scanner → detectors → intelligence
     ↓
 Context Generator    ← Phase 4
     ↓
@@ -198,8 +227,8 @@ Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 |-------|-------------------------------------------|--------|
 | 1 | Repository scanner, models, ignore rules  | Done |
 | 2 | Project Identification Engine             | Done |
-| 3 | Entry points, API routes, database        | Next |
-| 4 | Context file generation                   | Planned |
+| 3 | Code Intelligence Engine                  | Done |
+| 4 | Context file generation                   | Next |
 | 5 | MCP server                                | Planned |
 | 6 | Caching, incremental rescans, packaging   | Planned |
 
@@ -216,6 +245,9 @@ Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   or detector.
 - **Never guess.** Every detection carries confidence and evidence; "unknown"
   is always a valid, honest result.
+- **Static analysis, never execution.** Source code is parsed (`ast`), never
+  imported, `exec`'d or `eval`'d — the tool must be safe to run unattended
+  against any repository handed to it.
 - **No premature optimisation.** Build the current phase well; leave notes for
   the next one.
 

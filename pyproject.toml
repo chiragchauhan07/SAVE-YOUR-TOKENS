@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "save-your-tokens"
-version = "0.2.0"
+version = "0.3.0"
 description = "An MCP server for AI repository context generation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -31,8 +31,14 @@ mcp = []
 save-your-tokens = "cli:main"
 
 [tool.setuptools]
-packages = ["analyzer"]
 py-modules = ["cli", "server"]
+
+[tool.setuptools.packages.find]
+# Auto-discover analyzer/ and every subpackage under it (detectors/,
+# intelligence/, ...) rather than an explicit list — an explicit list
+# silently drops new subpackages from real (non-editable) builds. See
+# docs/DECISIONS.md.
+include = ["analyzer*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -56,8 +56,10 @@ tested and documented.
 own frameworks/package manager only (D-016) — nested manifests belong to
 subprojects and aren't read as evidence about the whole repository. Monorepo
 detection is a separate, explicit structural check (workspace config files),
-not an aggregation of every nested manifest. Per-workspace-package detail is
-deferred; see Phase 3 note below.
+not an aggregation of every nested manifest. Per-workspace-package detail
+remains deferred — Phase 3 didn't take it up either, since intelligence
+analysis has the identical root-vs-nested-manifest concern (D-019); still
+open for whichever future phase needs it.
 
 **Deliberately excluded:** import-statement scanning (manifest evidence
 alone is sufficient and far cheaper — see `docs/DECISIONS.md`), YAML content
@@ -69,31 +71,65 @@ future addendum), reading any file's *content* for environment detection
 
 ---
 
-## Phase 3 — Deep Analysis
+## Phase 3 — Code Intelligence Engine ✅
 
-**Goal:** find the parts of a repository an agent asks about first.
+**Goal:** understand a repository's internal Python structure — not its
+business logic — using deterministic `ast` analysis only.
 
-- [ ] Entry points: `main.py`, `manage.py`, `index.js`, `Dockerfile` CMD,
-      `[project.scripts]`, `package.json` scripts
-- [ ] API routes: Django `urls.py`, Flask/FastAPI decorators, Express routers,
-      Next.js file-system routing
-- [ ] Database layer: ORM models, migration directories, schema files
-- [ ] Configuration: `.env.example`, settings modules, env var references
-- [ ] Important-file ranking (see below)
-- [ ] Dependency graph from import statements
-- [ ] Per-workspace-package identification for monorepos: run Phase 2's
-      detectors rooted at each workspace member (from `pnpm-workspace.yaml`
-      / `package.json` `workspaces`) rather than only the repository root
-      (deferred from Phase 2, D-016)
+- [x] Entry points: `if __name__ == "__main__":`, `FastAPI()`/`Flask()` app
+      objects (plus `uvicorn.run()`/`include_router()` corroboration),
+      Django's `manage.py`
+- [x] Import graph: internal vs. external, correctly distinguishing
+      submodule imports from package-attribute imports (D-021)
+- [x] Circular import detection (DFS over resolved internal edges)
+- [x] Per-module metadata: classes, functions, async functions, UPPER_CASE
+      constants, exports (`__all__` or public names)
+- [x] API routes: FastAPI/Flask decorators (`@app.get(...)`,
+      `@app.route(..., methods=[...])`), Django `urls.py` (`path`/`re_path`)
+- [x] Database models: SQLAlchemy (1.x `Column`, 2.x `Mapped`), Pydantic
+      (`BaseModel`), Django ORM (`models.Model`) — table name and fields
+- [x] Authentication detection: JWT, OAuth, API keys, session auth, FastAPI
+      `Depends()` (correlated to a known security-scheme variable),
+      authentication middleware
+- [x] Configuration detection: settings modules, config classes
+      (`BaseSettings`/`Config`/`Settings`), environment loading, dotenv usage
+- [x] Module dependency relationships, derived from the import graph
+- [x] Evidence-based important-file ranking (entry point / fan-in / route /
+      model signals + naming convention, every signal capped, applies to
+      every Python file — D-024)
+- [x] `Project.entry_points`, `.modules`, `.imports`, `.circular_imports`,
+      `.routes`, `.database_models`, `.authentication`, `.configuration`,
+      `.module_dependencies`, `.important_files`
+- [x] `analyzer.analyze_intelligence()`; `analyze_repository()` now chains
+      scan → identify → analyze
+- [x] 44 new unit tests: FastAPI/Flask/Django/CLI apps, malformed Python
+      (syntax errors skipped, never fatal), circular imports, nested
+      packages, empty repositories
+- [x] Documentation
 
-Python is parsed with the standard library `ast`. Other languages start with
-conservative signature matching; a real parser is added only when heuristics
-prove insufficient.
+**Deliberately excluded:** JavaScript/TypeScript route or model detection
+(Python only this phase — see `analyzer/intelligence/common.py`'s module
+docstring for how a second language slots in later without changing
+existing modules), inspecting function/method *bodies* (a route handler's
+name is recorded, not what it does), `Express routers`/`Next.js file-system
+routing`/`Dockerfile CMD`/`package.json scripts` entry points (JS/TS
+scope, deferred with the rest of JS/TS intelligence), migration-directory
+and schema-file database detection (ORM model classes only, not raw SQL or
+migration history).
 
-**Important-file ranking** is the hardest judgement call in the project.
-Candidate signals: import fan-in, proximity to entry points, manifest
-references, directory conventions, size relative to siblings. Start simple,
-measure against real repositories, iterate.
+**Resolved judgement call (import resolution):** absolute imports resolve
+against the repository root only, not a real `sys.path` — a `src/`-layout
+project's absolute imports will under-resolve (D-019). Getting this
+partially right deterministically was judged better than guessing the real
+import root, which the "never guess" philosophy forbids outright.
+
+**Found during this phase, fixed in this phase:** a packaging bug present
+since Phase 2 — `pyproject.toml`'s explicit `packages = ["analyzer"]` list
+silently dropped `analyzer.detectors` and `analyzer.intelligence` from a
+real (non-editable) wheel build, invisible to every local dev workflow
+(editable install, `pytest`, running `cli.py` directly). Fixed with
+`packages.find` auto-discovery (D-025). A real wheel build is now part of
+verifying any future package-boundary change.
 
 ---
 

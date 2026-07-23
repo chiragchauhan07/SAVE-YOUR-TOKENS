@@ -122,14 +122,105 @@ class LanguageStat:
 
 
 @dataclass(frozen=True, slots=True)
-class Project:
-    """The complete result of scanning and identifying a repository.
+class EntryPoint:
+    """A point where the application starts running.
 
-    This is the object every later phase (deep analysis, context
-    generation) consumes as its input. ``files`` and ``stats`` are produced
-    by the Phase 1 scanner; every field below them is produced by the
-    Phase 2 identification detectors (``analyzer.detectors``) and defaults
-    to empty until ``identify_project()`` has run.
+    ``kind`` is one of ``"script"`` (an ``if __name__ == "__main__":``
+    guard), ``"fastapi_app"``, ``"flask_app"`` or ``"django_manage"``.
+    ``symbol`` is the app variable name for ``fastapi_app``/``flask_app``
+    (e.g. ``"app"``), ``None`` otherwise.
+    """
+
+    file: PurePosixPath
+    kind: str
+    symbol: str | None
+    confidence: Confidence
+    evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ImportEdge:
+    """One import statement, and whether it resolves inside this repository.
+
+    ``module`` is the import as written: a dotted absolute name, or a
+    dot-prefixed relative form (``".foo"``, ``".."``) mirroring the source.
+    """
+
+    file: PurePosixPath
+    module: str
+    is_internal: bool
+    #: The internal file this import resolves to, when ``is_internal``.
+    resolved_file: PurePosixPath | None
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleInfo:
+    """Structural metadata for one Python module — never business logic."""
+
+    file: PurePosixPath
+    classes: tuple[str, ...]
+    functions: tuple[str, ...]
+    async_functions: tuple[str, ...]
+    #: Module-level UPPER_CASE assignments — the recognised constant convention.
+    constants: tuple[str, ...]
+    #: ``__all__`` if declared, else every non-underscore-prefixed top-level name.
+    exports: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Route:
+    """One detected HTTP route. Detection only — never what the handler does."""
+
+    method: str
+    path: str
+    handler: str
+    file: PurePosixPath
+    #: "FastAPI", "Flask" or "Django".
+    framework: str
+
+
+@dataclass(frozen=True, slots=True)
+class DatabaseModel:
+    """One detected ORM/schema model. Structure only — no semantic interpretation."""
+
+    name: str
+    #: "SQLAlchemy", "Pydantic" or "Django ORM".
+    orm: str
+    #: Explicit ``__tablename__``, when declared.
+    table_name: str | None
+    file: PurePosixPath
+    fields: tuple[str, ...]
+    evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleDependency:
+    """A directed internal-import edge between two files in this repository."""
+
+    source: PurePosixPath
+    target: PurePosixPath
+
+
+@dataclass(frozen=True, slots=True)
+class ImportantFile:
+    """A file ranked by evidence-based signals — never a hardcoded name."""
+
+    file: PurePosixPath
+    score: int
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class Project:
+    """The complete result of scanning, identifying and analysing a repository.
+
+    This is the object every later phase (context generation) consumes as
+    its input. ``files`` and ``stats`` come from the Phase 1 scanner;
+    ``languages`` through ``repository_type`` from the Phase 2 identification
+    detectors (``analyzer.detectors``); ``entry_points`` through
+    ``important_files`` from the Phase 3 intelligence layer
+    (``analyzer.intelligence``). Every field beyond ``files``/``stats``
+    defaults to empty until the corresponding phase has run.
     """
 
     #: Absolute, resolved path to the repository root.
@@ -151,6 +242,18 @@ class Project:
     #: unidentifiable repository gets an explicit "Unknown" Detection, not
     #: ``None`` after ``identify_project()`` has run.
     repository_type: Detection | None = None
+    entry_points: tuple[EntryPoint, ...] = ()
+    modules: tuple[ModuleInfo, ...] = ()
+    imports: tuple[ImportEdge, ...] = ()
+    #: Each cycle is a sequence of internal file paths (as strings) forming
+    #: an import loop, e.g. ``("app/auth.py", "app/database.py")``.
+    circular_imports: tuple[tuple[str, ...], ...] = ()
+    routes: tuple[Route, ...] = ()
+    database_models: tuple[DatabaseModel, ...] = ()
+    authentication: tuple[Detection, ...] = ()
+    configuration: tuple[Detection, ...] = ()
+    module_dependencies: tuple[ModuleDependency, ...] = ()
+    important_files: tuple[ImportantFile, ...] = ()
 
     def files_with_extension(self, extension: str) -> tuple[FileInfo, ...]:
         """All files matching ``extension`` (e.g. ``".py"``)."""

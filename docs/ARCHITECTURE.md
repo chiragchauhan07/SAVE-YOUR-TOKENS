@@ -8,15 +8,16 @@ onto it. MCP is the first such interface, not the centre of the system.
 ```
 Repository
     ↓
-┌─────────────────────────────────────────┐
-│ Analysis Engine  (analyzer/)            │
-│                                         │
-│   Scanner   → walks, filters, measures  │
-│   Detectors → languages, frameworks     │
-│   Parsers   → manifests, routes, models │
-│                                         │
-│   Output: Project (typed, frozen)       │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│ Analysis Engine  (analyzer/)              │
+│                                           │
+│   Scanner       → walks, filters, measures│
+│   Detectors     → languages, frameworks   │
+│   Intelligence  → entry points, routes,   │
+│                    models, imports, auth  │
+│                                           │
+│   Output: Project (typed, frozen)         │
+└───────────────────────────────────────────┘
     ↓
 ┌─────────────────────────────────────────┐
 │ Context Generator                       │
@@ -100,17 +101,54 @@ call.
 `pyproject.toml` declares `fastapi` is a manifest fact; reading `app.py` to
 see how routes are wired is Phase 3's job.
 
-### 3. Parsers — Phase 3
+### 3. Intelligence — implemented (Python only)
 
-**Responsibility:** extract structured data from application source itself.
+**Responsibility:** understand a repository's internal Python structure —
+never its business logic.
 
-`urls.py` → routes. `models.py` → schema. Entry points, API surfaces,
-database layer. This is the first layer permitted to read and parse
-*application* code (manifests are already handled in Phase 2 — see D-011).
-Each parser targets one format/language and knows nothing about the others.
+Nine modules under `analyzer/intelligence/`, each answering one question
+about a `Project` from `ast`-parsed Python source:
 
-Python source is parsed with the standard library `ast` module — never with
-regular expressions where a real parser exists.
+- `entrypoints.py` — where the application starts (`if __name__ ==
+  "__main__":`, `FastAPI()`/`Flask()` app objects, Django's `manage.py`)
+- `imports.py` — the import graph: internal vs. external, and circular
+  imports among internal modules (DFS over resolved internal edges)
+- `modules.py` — per-module structural metadata: classes, functions, async
+  functions, UPPER_CASE constants, exports (`__all__` or public names)
+- `routes.py` — FastAPI/Flask/Django HTTP routes: method, path, handler
+- `database.py` — SQLAlchemy, Pydantic and Django ORM models: name, fields,
+  table name
+- `authentication.py` — JWT, OAuth, API keys, session auth, FastAPI
+  `Depends()`, authentication middleware (reuses `Detection`)
+- `configuration.py` — settings modules, config classes, environment
+  loading, dotenv usage (reuses `Detection`)
+- `relationships.py` — reshapes internal import edges into a deduplicated
+  module-dependency list
+- `importance.py` — evidence-based file ranking (entry point, import
+  fan-in, route/model count, naming convention — never a hardcoded name)
+
+Two shared pieces make this possible without duplicating parsing logic:
+
+- `common.py` — `parse_python_files()` (parses every `.py` file once,
+  silently skipping syntax errors — D-018) and two small AST-name helpers
+  (`simple_name`, `qualifier_name`) reused across five of the modules above.
+- `analyzer/detectors/manifests.py` — Phase 3 reuses Phase 2's dependency
+  reader (`python_dependencies()`) directly as corroborating evidence in
+  `authentication.py`, rather than re-deriving manifest parsing.
+
+`analyze_intelligence()` (`intelligence/__init__.py`) runs every module via
+direct function calls (same no-registry choice as Phase 2, D-015) and
+returns a new `Project` with the results attached. It must run after
+`identify_project()` — route and configuration detection read
+`Project.frameworks` and `Project.environment_files`. `analyze_repository()`
+composes all three phases (scan → identify → analyze) into one call.
+
+**Hard rules, not just conventions (D-018):** no `import`, `exec`, `eval` or
+any other execution of analyzed repository code — everything is `ast`-only,
+static analysis. No inspection of function/method *bodies* for business
+logic (a route's handler name is recorded; what the handler does is not).
+Python only for now; a second language is a new sibling package following
+the same one-function-per-concern shape, not a change to this one.
 
 ### 4. Generator — Phase 4
 
@@ -154,20 +192,37 @@ Project
 ├── ci_providers: tuple[Detection, ...]                            (Phase 2)
 ├── container_tools: tuple[Detection, ...]                         (Phase 2)
 ├── environment_files: tuple[Detection, ...]                       (Phase 2)
-└── repository_type: Detection | None                              (Phase 2)
+├── repository_type: Detection | None                              (Phase 2)
+├── entry_points: tuple[EntryPoint, ...]                           (Phase 3)
+├── modules: tuple[ModuleInfo, ...]                                (Phase 3)
+├── imports: tuple[ImportEdge, ...]                                (Phase 3)
+├── circular_imports: tuple[tuple[str, ...], ...]                  (Phase 3)
+├── routes: tuple[Route, ...]                                      (Phase 3)
+├── database_models: tuple[DatabaseModel, ...]                     (Phase 3)
+├── authentication: tuple[Detection, ...]                          (Phase 3)
+├── configuration: tuple[Detection, ...]                           (Phase 3)
+├── module_dependencies: tuple[ModuleDependency, ...]              (Phase 3)
+└── important_files: tuple[ImportantFile, ...]                     (Phase 3)
 ```
 
 `Detection` (name, `Confidence`, evidence tuple) is one shared type reused
-across every Phase 2 category rather than a bespoke class per category
-(D-013) — frameworks, package managers, build tools, CI providers,
-container tooling and environment surfaces are all "I found X, here's why".
-`Confidence` is `LOW < MEDIUM < HIGH`.
+across every Phase 2 category, and again for Phase 3's `authentication` and
+`configuration`, rather than a bespoke class per category (D-013) —
+frameworks, package managers, build tools, CI providers, container tooling,
+environment surfaces, auth mechanisms and config surfaces are all "I found
+X, here's why". `Confidence` is `LOW < MEDIUM < HIGH`.
 
-Later phases extend `Project` with `entry_points`, `routes`, `database` and
-similar fields. Extension is additive: existing fields keep their meaning so
-earlier consumers never break. All Phase 2 fields default to empty/`None`
-until `identify_project()` has run, so a bare `scan_repository()` result
-remains a valid `Project`.
+Phase 3 also introduces types specific enough to need their own shape
+(structured fields beyond name/confidence/evidence): `EntryPoint`,
+`ImportEdge`, `ModuleInfo`, `Route`, `DatabaseModel`, `ModuleDependency`,
+`ImportantFile` — all frozen, slotted dataclasses, same as everything else
+in `models.py`.
+
+Later phases extend `Project` with fields for its own concerns. Extension
+is additive: existing fields keep their meaning so earlier consumers never
+break. Every field beyond `files`/`stats` defaults to empty/`None` until
+its phase has run, so a bare `scan_repository()` result remains a valid
+`Project`.
 
 ## Determinism
 
