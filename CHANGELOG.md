@@ -7,7 +7,77 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Phase 5 — MCP server. See [docs/ROADMAP.md](docs/ROADMAP.md).
+No active development. Phase 5 completed the first production-ready
+release; see [docs/ROADMAP.md](docs/ROADMAP.md) for possible future work.
+
+## [0.5.0] — 2026-07-23
+
+Phase 5: the MCP Integration Layer — this project's first production-ready
+release. Exposes the analysis engine and Knowledge Base generator through
+the Model Context Protocol, as a thin adapter with no analysis logic of its
+own.
+
+### Added
+
+- `mcp_server/` — a new top-level package using the official MCP Python
+  SDK (`mcp.server.fastmcp.FastMCP`), stdio transport. `handlers.py` holds
+  pure business logic with zero MCP SDK imports (testable directly);
+  `tools.py` is the only module that imports the SDK.
+- Four MCP tools:
+  - `analyze_repository` — analyse a repository, optionally also generate
+    (and optionally write) its Knowledge Base, from a single analysis pass.
+  - `repository_summary` — a fast, structured overview (type, languages,
+    frameworks, entry points, routes, database models, important files,
+    authentication, configuration) without generating the Knowledge Base.
+  - `generate_knowledge_base` — generate and write the `.ai-context/`
+    Knowledge Base; returns file names and byte counts, never document
+    content.
+  - `health_check` — package version, MCP SDK version, and environment
+    information, for diagnosing an installation.
+- Professional error handling: every tool catches its own exceptions and
+  returns `{"success": false, "error": {"type": ..., "message": ...}}`
+  rather than propagating a raw exception — confirmed by direct testing
+  that the SDK's own exception wrapping echoes the original exception
+  message verbatim, which is not safe to trust by default. Six error
+  types: `repository_not_found`, `invalid_repository`,
+  `permission_denied`, `analysis_failed`, `generation_failed`,
+  `internal_error`.
+- Structured logging to stderr only (`WARNING` by default, configurable via
+  `SAVE_YOUR_TOKENS_LOG_LEVEL`) — stdout is reserved for the MCP protocol
+  stream on stdio transport.
+- `analyzer/serialization.py` — the JSON-conversion helpers that used to be
+  private to `cli.py`, extracted so the CLI and MCP server share one
+  implementation instead of two.
+- Root `server.py` implemented as a thin shim over `mcp_server/`, the same
+  role `cli.py` already has over `analyzer`/`generator`.
+- `save-your-tokens-mcp` console script; `mcp` and `dev` optional-dependency
+  groups now include the official `mcp` SDK (`mypy` was also added to
+  `dev`, closing a gap where it had been used for verification since
+  Phase 1 without ever being declared).
+- `docs/MCP_SERVER.md` — installation, an example Claude Code
+  configuration, the full tool reference with example requests/responses,
+  supported clients, error types, and known limitations.
+- 35 new tests: handler-level unit tests for every tool and error path, a
+  single-analysis-per-call regression guard, FastMCP tool-registration and
+  in-process invocation tests, a byte-for-byte CLI/MCP output parity test,
+  and one real stdio-transport integration test that spawns `server.py` as
+  a subprocess and speaks actual MCP protocol to it via the official
+  client SDK.
+
+### Notes
+
+- Still no LLM anywhere in `analyzer/` or `generator/`. The MCP SDK is this
+  project's first runtime dependency, and it is scoped to `mcp_server/`
+  only — installing `save-your-tokens` without the `mcp` extra still gets a
+  dependency-free analysis engine and generator.
+- Verified end-to-end: a real (non-editable) wheel build included every new
+  subpackage on the first attempt; installed into a clean virtual
+  environment; both console scripts (`save-your-tokens`,
+  `save-your-tokens-mcp`) exercised from that install; the installed MCP
+  server driven over a real stdio subprocess by the official client SDK.
+- Dogfooded against this repository: the Knowledge Base generated via the
+  MCP server and the one generated via `python cli.py generate .` are
+  byte-identical, file for file.
 
 ## [0.4.0] — 2026-07-23
 
@@ -237,7 +307,8 @@ Phase 1: the repository analysis foundation.
 - File contents are not read in this phase; the scanner reports facts about
   files, not conclusions about the project.
 
-[Unreleased]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.1.0...v0.2.0

@@ -5,10 +5,12 @@
 Turn a software repository into a compact, structured briefing that an AI
 coding agent can read in seconds instead of rediscovering by search.
 
-> **Status: Phase 4 — AI Knowledge Base Generator.** The repository scanner,
-> identification detectors, Python code intelligence, and the `.ai-context/`
-> Knowledge Base generator — this project's primary output — are implemented
-> and tested. The MCP server is not built yet. See the [Roadmap](#roadmap).
+> **Status: first production-ready release (Phase 5 complete).** The
+> repository scanner, identification detectors, Python code intelligence,
+> the `.ai-context/` Knowledge Base generator, and the MCP server are all
+> implemented and tested. See the [Roadmap](#roadmap) and
+> [docs/MCP_SERVER.md](docs/MCP_SERVER.md) for MCP installation and
+> client configuration.
 
 ---
 
@@ -69,7 +71,7 @@ the core.
 
 ## Features
 
-**Available now (Phase 1 + 2 + 3 + 4)**
+**Available now (Phase 1 through 5)**
 
 - Recursive repository scanning with directory pruning
 - Deterministic, sorted, reproducible output
@@ -93,21 +95,35 @@ the core.
 - AI-native Knowledge Base generation: twelve deterministic, cross-referenced
   Markdown files in `.ai-context/`, every file always present with graceful
   "none detected" content, never a copy of source code
+- An MCP server (four tools: `analyze_repository`, `repository_summary`,
+  `generate_knowledge_base`, `health_check`) exposing the same engine over
+  the Model Context Protocol — byte-identical output to the CLI, safe
+  structured error handling, stdio transport
 - Typed `Project` model as the engine's public contract
 - CLI with human and JSON output, plus `generate` for the Knowledge Base
 
-**Planned**
-
-- MCP server (Phase 5)
-
 ## Installation
 
-Requires Python 3.11+. No runtime dependencies.
+Requires Python 3.11+. The analysis engine and Knowledge Base generator
+have no runtime dependencies; the MCP server needs the official `mcp` SDK
+(the project's only dependency, and only for that layer).
 
 ```bash
 git clone https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS.git save-your-tokens
 cd save-your-tokens
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev]"      # CLI + generator + MCP server + dev tools
+```
+
+CLI and generator only, no MCP:
+
+```bash
+python -m pip install -e .
+```
+
+MCP server only (as a published package, once released):
+
+```bash
+python -m pip install "save-your-tokens[mcp]"
 ```
 
 ## Usage
@@ -240,25 +256,55 @@ project = identify_project(project)      # languages, frameworks, ...
 project = analyze_intelligence(project)  # entry points, routes, models, ...
 ```
 
+## MCP server
+
+Four tools over the Model Context Protocol — same engine, same results as
+the CLI:
+
+```bash
+python server.py                # run over stdio
+save-your-tokens-mcp             # equivalent, once installed
+```
+
+Claude Code configuration (`.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "save-your-tokens": {
+      "command": "save-your-tokens-mcp"
+    }
+  }
+}
+```
+
+Full tool reference, example requests/responses, other client
+configurations, error types and limitations:
+[docs/MCP_SERVER.md](docs/MCP_SERVER.md).
+
 ## Architecture
 
 ```
 Repository
     ↓
-Analysis Engine        ← analyzer/   (deterministic, no MCP, no LLM)
-                          scanner → detectors → intelligence
+Analysis Engine          ← analyzer/     (deterministic, no MCP, no LLM)
+                            scanner → detectors → intelligence
     ↓
-Knowledge Base Generator ← generator/   (Project → .ai-context/, the primary output)
+Knowledge Base Generator ← generator/    (Project → .ai-context/, the primary output)
     ↓
-MCP Server              ← server.py   (thin adapter)
+MCP Integration Layer    ← mcp_server/   (thin adapter, 4 tools)
+    ↓
+server.py, cli.py        (entry points)
     ↓
 Claude Code / Cursor / any MCP client
 ```
 
-The engine discovers, the generator organizes, interfaces expose. `generator/`
-consumes only `analyzer.models.Project` — never re-scans, re-parses, or
-touches the analyzed repository's source. A CLI, a web app or an HTTP API can
-be added on top of either without touching `analyzer/` or `generator/`.
+The engine discovers, the generator organizes, interfaces expose.
+`generator/` consumes only `analyzer.models.Project`; `mcp_server/` consumes
+only the public APIs of `analyzer/` and `generator/`. Neither re-scans,
+re-parses, or touches the analyzed repository's source beyond what the
+engine already extracted. A web app or an HTTP API could be added the same
+way, without touching `analyzer/`, `generator/`, or `mcp_server/`.
 
 Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -270,8 +316,8 @@ Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | 2 | Project Identification Engine             | Done |
 | 3 | Code Intelligence Engine                  | Done |
 | 4 | AI Knowledge Base Generator                | Done |
-| 5 | MCP server                                | Next |
-| 6 | Caching, incremental rescans, packaging   | Planned |
+| 5 | MCP Integration Layer                     | Done |
+| 6 | Caching, incremental rescans, packaging   | Possible future work |
 
 Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 
@@ -304,6 +350,8 @@ python -m pytest -q
 ## Documentation
 
 - [CLAUDE.md](CLAUDE.md) — working agreement for AI sessions on this repo
+- [docs/MCP_SERVER.md](docs/MCP_SERVER.md) — MCP installation, client
+  configuration, tool reference
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/ROADMAP.md](docs/ROADMAP.md)
 - [docs/DECISIONS.md](docs/DECISIONS.md)

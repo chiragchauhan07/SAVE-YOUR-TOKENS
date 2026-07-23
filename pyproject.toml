@@ -4,41 +4,43 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "save-your-tokens"
-version = "0.4.0"
+version = "0.5.0"
 description = "An MCP server for AI repository context generation."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 keywords = ["mcp", "static-analysis", "ai", "developer-tools", "context"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development :: Documentation",
 ]
 
-# Phase 1 has no runtime dependencies. The analysis engine is standard
-# library only, and stays that way for as long as possible.
+# The analysis engine and generator remain standard-library only. The MCP
+# integration layer (mcp_server/) is the project's first runtime dependency
+# — the official MCP SDK, required to speak the protocol correctly rather
+# than implementing it by hand. See docs/DECISIONS.md (D-039).
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6"]
-# Populated in Phase 5, when server.py is implemented.
-mcp = []
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.8", "mcp>=1.0.0"]
+mcp = ["mcp>=1.0.0"]
 
 [project.scripts]
 save-your-tokens = "cli:main"
+save-your-tokens-mcp = "server:main"
 
 [tool.setuptools]
 py-modules = ["cli", "server"]
 
 [tool.setuptools.packages.find]
-# Auto-discover analyzer/ and generator/ and every subpackage under each
-# (detectors/, intelligence/, renderers/, ...) rather than an explicit list
-# — an explicit list silently drops new subpackages from real
-# (non-editable) builds. See docs/DECISIONS.md (D-025).
-include = ["analyzer*", "generator*"]
+# Auto-discover analyzer/, generator/ and mcp_server/ and every subpackage
+# under each, rather than an explicit list — an explicit list silently
+# drops new subpackages from real (non-editable) builds. See
+# docs/DECISIONS.md (D-025, D-033).
+include = ["analyzer*", "generator*", "mcp_server*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

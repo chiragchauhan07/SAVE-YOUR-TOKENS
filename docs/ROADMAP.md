@@ -176,15 +176,52 @@ done, not just running the test suite.
 
 ---
 
-## Phase 5 — MCP Server
+## Phase 5 — MCP Integration Layer ✅
 
-**Goal:** make the engine callable by any MCP client.
+**Goal:** make the engine and generator callable by any MCP client, as a
+thin adapter with no analysis logic of its own. This phase completes the
+first production-ready release.
 
-- [ ] Implement `server.py` over stdio
-- [ ] Tools: `analyze_repository`, `generate_context`, `get_context`
-- [ ] Argument validation and useful error messages
-- [ ] Installation and configuration docs for Claude Code and Cursor
-- [ ] End-to-end verification against a real client
+- [x] `mcp_server/` package using the official MCP Python SDK
+      (`mcp.server.fastmcp.FastMCP`) — stdio transport
+- [x] Four tools: `analyze_repository`, `repository_summary`,
+      `generate_knowledge_base`, `health_check`
+- [x] `handlers.py` (pure logic, testable without the SDK) / `tools.py`
+      (the only module importing the SDK) split — same layering discipline
+      as Phases 2 and 3
+- [x] Every tool catches its own exceptions and returns a safe, typed
+      `{"success": false, "error": {"type": ..., "message": ...}}` rather
+      than trusting the SDK's own error wrapping (confirmed unsafe by
+      direct testing — see D-035)
+- [x] Structured logging to stderr only, `WARNING` by default, `stdout`
+      reserved for the protocol stream
+- [x] `analyzer/serialization.py` extracted from `cli.py`'s private JSON
+      helpers so the CLI and MCP server share one conversion, not two
+      (D-034)
+- [x] Root `server.py` implemented as a thin shim over `mcp_server/`
+- [x] `save-your-tokens-mcp` console script; `mcp` extras dependency group
+- [x] 35 new tests: tool registration, every tool's success and error
+      paths, sequential-call independence, a real stdio-transport
+      subprocess integration test, and a byte-for-byte CLI/MCP output
+      parity test
+- [x] `docs/MCP_SERVER.md` — installation, Claude Code configuration,
+      full tool reference, error types, limitations
+- [x] Dogfooded: real wheel build, clean-venv install, real installed
+      console script exercised over real stdio transport, generated
+      Knowledge Base compared byte-for-byte against the CLI's
+
+**Deliberately excluded:** SSE/streamable-HTTP transport (stdio only —
+D-037, though the design doesn't block adding one later), returning
+Knowledge Base document content over the wire (statistics only — D-040),
+authentication/multi-tenancy (a local single-user server, same trust model
+as any other local MCP server a client launches).
+
+**Found and fixed proactively, not reactively this time:** the
+`generator/` packaging lesson from Phase 4 (D-033) was applied *before*
+writing `mcp_server/`, not discovered after — `mcp_server*` was added to
+`pyproject.toml`'s `packages.find` include list before the first wheel
+build for this phase, and that build included the package correctly on the
+first attempt.
 
 ---
 

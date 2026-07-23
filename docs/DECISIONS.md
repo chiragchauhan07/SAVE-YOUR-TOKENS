@@ -722,3 +722,260 @@ project's primary output.
 **Consequence.** Any future new top-level package needs the same check:
 build a real wheel and confirm its contents before considering the phase
 done, not just `pip install -e .`.
+
+---
+
+## D-034 — Shared JSON serialisation extracted into `analyzer/serialization.py`
+
+**Context.** `cli.py`'s `--json` output already converted a `Project` (and
+every nested `Detection`, `Route`, `ModuleInfo`, ...) into plain dicts, via
+a set of private, module-local functions. The MCP server needs the exact
+same conversions for its own tool responses.
+
+**Decision.** Moved those functions verbatim out of `cli.py` into
+`analyzer/serialization.py` (`project_to_dict`, `detection_dict`,
+`route_dict`, ...). `cli.py` now imports and calls them instead of defining
+its own copies; `mcp_server/utils.py` imports the same functions.
+
+**Why.** Phase 5's own instructions are explicit: "reuse existing engines
+... never duplicate logic." Two independent implementations of "how does a
+`Route` become a dict" would drift the moment one changed without the
+other — exactly the kind of duplication this project has avoided since
+Phase 1.
+
+**Consequence.** `cli.py --json` output is unchanged (same shape, verified
+by the existing test suite still passing after the move — this was a pure
+relocation, not a rewrite). Any future consumer needing `Project` as JSON
+(a future web UI, for instance) has one place to import from.
+
+---
+
+## D-035 — The MCP layer catches every exception itself; it does not rely on FastMCP's own error wrapping
+
+**Context.** FastMCP catches an exception raised inside a tool function and
+re-raises it as `ToolError(f"Error executing tool {name}: {e}")`. Confirmed
+by direct testing while designing this phase: that message embeds
+`str(e)` — the *original* exception's message — verbatim, with no
+sanitisation.
+
+**Decision.** Every tool in `mcp_server/tools.py` wraps its handler call in
+`_run()`, which catches `Exception` broadly, calls
+`errors.classify_exception()` to produce a safe, typed `ToolError`, and
+returns `{"success": False, "error": {...}}` as a normal tool result —
+never letting the original exception (or FastMCP's wrapping of it) reach
+the client.
+
+**Why.** "Never expose stack traces to clients" is an explicit Phase 5
+requirement, and relying on the SDK's own exception handling would mean
+trusting `str(exception)` never contains anything sensitive — a bet this
+project isn't willing to make, especially since the two exceptions we *do*
+pass through verbatim (`FileNotFoundError`, `NotADirectoryError`) are
+deliberately checked to be the two cases whose messages are already
+hand-authored safe text (`analyzer.utils.validate_repository_path`), not
+arbitrary exception content.
+
+**Consequence.** Tool responses have a stable, documented shape
+(`{"success": bool, ...}` or `{"success": false, "error": {"type": ...,
+"message": ...}}`) regardless of what actually failed — a client can branch
+on `success` without needing to know MCP-protocol-level error semantics.
+The real exception is still fully logged (with traceback) via
+`logging.exception()`, to stderr only, for developer debugging (D-038).
+
+---
+
+## D-036 — `analyze_repository` and `repository_summary` share one response-shaping function
+
+**Context.** Both tools return "a structured summary" of the same kind of
+data — project type, languages, frameworks, entry points, routes, database
+models, important files, authentication, configuration.
+
+**Decision.** `mcp_server/utils.py::build_repository_summary(project)` is
+the one function that shapes this response; both tools' handlers call it.
+
+**Why.** Same "never duplicate logic" principle as D-034, applied within
+the MCP layer itself rather than between the MCP layer and the CLI. It also
+guarantees the two tools can never silently drift apart in what fields they
+expose.
+
+**Consequence.** The important-files list in this summary is capped at 20
+entries (`_SUMMARY_IMPORTANT_FILES`) — a deliberate payload-size bound, not
+a reflection of a smaller analysis; the complete ranking is always in the
+generated `IMPORTANT_FILES.md` (or the full `analyzer.serialization.project_to_dict()`
+representation, uncapped, used by `cli.py scan --json`).
+
+---
+
+## D-037 — stdio transport only, for this phase
+
+**Context.** MCP supports several transports (stdio, SSE, streamable HTTP).
+Phase 5 explicitly scopes to stdio but asks for a design that "remains
+compatible with future MCP transports."
+
+**Decision.** `mcp_server/server.py::main()` calls
+`mcp.run(transport="stdio")`. Nothing else in the tool or handler layer
+knows or cares which transport is in use.
+
+**Why.** stdio is what every current MCP client (Claude Code, Claude
+Desktop, Cursor) launches a local server with, and it's explicitly named as
+this phase's required transport. FastMCP's `run()` already accepts
+`"stdio" | "sse" | "streamable-http"` as a single parameter — the tool
+surface (`tools.py`, `handlers.py`) has zero transport-specific code to
+begin with, so adding a transport later is a `server.py` change, not a
+redesign.
+
+**Consequence.** No SSE/HTTP testing or configuration in this phase. A
+future phase that wants a remote/network transport changes one function
+call and adds host/port configuration — everything upstream of `server.py`
+is already transport-agnostic.
+
+---
+
+## D-038 — Logging goes to stderr only; stdout is reserved for the protocol
+
+**Context.** On stdio transport, the MCP JSON-RPC stream *is* stdout.
+Anything else written there — a stray `print()`, a misconfigured logger —
+corrupts every message after it.
+
+**Decision.** `mcp_server/server.py::_configure_logging()` calls
+`logging.basicConfig(stream=sys.stderr, ...)` explicitly. No module in
+`mcp_server/` ever calls `print()`. Verified directly: running a tool call
+with `1>stdout_only.txt 2>stderr_only.txt` showed stdout containing only
+the caller's own output, all SDK and application log lines on stderr.
+
+**Why.** This is a correctness requirement, not a style preference — a
+server that occasionally prints a debug line to stdout doesn't "log too
+much", it silently breaks the protocol for whichever client happens to be
+mid-read at that moment. Cheaper to make it structurally impossible than to
+rely on every future contributor remembering not to `print()`.
+
+**Consequence.** Default log level is `WARNING` (quiet, per the Phase 5
+"support quiet operation" requirement); set
+`SAVE_YOUR_TOKENS_LOG_LEVEL=INFO` or `DEBUG` for development visibility —
+still to stderr, still safe.
+
+---
+
+## D-039 — The MCP SDK is this project's first runtime dependency
+
+**Context.** `analyzer/` and `generator/` have stayed standard-library-only
+since Phase 1 (D-009, D-026, and others). Phase 5 explicitly requires using
+the official MCP Python SDK rather than implementing the protocol by hand.
+
+**Decision.** `mcp>=1.0.0` is a dependency of the `mcp_server` package only
+— declared in `pyproject.toml`'s `mcp` and `dev` optional-dependency
+groups, not the base `dependencies` list. `analyzer/` and `generator/`
+still import nothing beyond the standard library.
+
+**Why.** The instruction is explicit and the reasoning is sound
+independent of that: implementing JSON-RPC framing, capability negotiation
+and the MCP message schema by hand would be a large amount of
+protocol-compliance surface to maintain for no benefit over the SDK
+Anthropic already publishes and versions for exactly this purpose. This is
+categorically different from D-026's "don't add a templating engine for
+what f-strings already do" — there is no standard-library equivalent of an
+MCP SDK.
+
+**Consequence.** `pip install save-your-tokens` (no extras) still gets a
+dependency-free analysis engine and generator; `pip install
+save-your-tokens[mcp]` (or `[dev]`) is required to run the MCP server.
+`docs/MCP_SERVER.md` documents this distinction for installers.
+
+---
+
+## D-040 — Knowledge Base tools return statistics, never document content
+
+**Context.** `generate_knowledge_base` and `analyze_repository` (when asked
+to include the Knowledge Base) could return the full rendered Markdown for
+all twelve files inline in the MCP response.
+
+**Decision.** They return file names and byte counts
+(`{"files": [...], "total_bytes": ...}`), never the Markdown content
+itself. Content only ever reaches disk, via `write_knowledge_base`.
+
+**Why.** Phase 5's own wording is explicit: "return generation statistics."
+A large repository's Knowledge Base can run to tens of kilobytes across
+twelve files; echoing all of it back through every `generate_knowledge_base`
+call would be a needless, repeated allocation and transfer for data the
+caller can already read from disk (an AI coding assistant invoking this
+tool already has filesystem access to `.ai-context/`) — directly the kind
+of "avoid unnecessary allocations" the Performance requirements name.
+
+**Consequence.** A client that wants content, not just confirmation the
+Knowledge Base was written, reads the files themselves. If a future use
+case genuinely needs content over the wire (a client with no filesystem
+access to the analysed repository), that's an additive change — a new
+optional flag — not a redesign of this one.
+
+---
+
+## D-041 — `mcp_server/` is a top-level package, following `generator/`'s precedent
+
+**Context.** Same structural question D-028 already answered for
+`generator/`: nest under `analyzer/`, or sit alongside it.
+
+**Decision.** `mcp_server/` is a sibling of `analyzer/`, `generator/`,
+`cli.py` and `server.py` — not nested under either engine package.
+
+**Why.** `mcp_server/` is an *interface* onto both `analyzer/` and
+`generator/` (per the layered diagram: Scanner → Identification →
+Intelligence → Generator → **MCP Integration Layer**), architecturally the
+same role as `cli.py`, just richer. It imports from both engine packages
+but neither imports from it, matching the one-way dependency rule.
+
+**Consequence.** The `pyproject.toml` packaging lesson from D-025/D-033
+applied proactively this time — `mcp_server*` was added to
+`packages.find`'s include list *before* the first wheel build for this
+phase, and that build confirmed the package was included correctly on the
+first attempt.
+
+---
+
+## D-042 — Health check reports the installed MCP SDK version, not a hardcoded protocol version string
+
+**Context.** Phase 5 asks the health tool to report "protocol version" among
+other fields.
+
+**Decision.** `health_check` reports `mcp_sdk_version` (via
+`importlib.metadata.version("mcp")`) instead of a hardcoded MCP protocol
+revision string (e.g. a date-versioned spec identifier).
+
+**Why.** The installed SDK version is the one fact this server can verify
+at runtime without guessing; a hardcoded protocol-revision string would be
+exactly the kind of unsupported, unverifiable claim the "never guess"
+principle has ruled out in every previous phase. The SDK version is a
+faithful, honest proxy for "what protocol capabilities does this server
+actually have" and is what actually helps someone debug an installation —
+the stated goal of this tool.
+
+**Consequence.** `package_version` and `server_version` currently report
+the same value (`analyzer.__version__`) since there is one project version,
+not two independently-versioned components; both fields are kept because
+Phase 5 names them separately and a future split (the MCP layer versioned
+independently of the engine) would need only implementation, not an API
+change.
+
+---
+
+## D-043 — The root `server.py` stays a thin shim; the real implementation lives in `mcp_server/`
+
+**Context.** `server.py` at the repository root has been referenced since
+Phase 1 as *the* MCP entry point (`CLAUDE.md`, `README.md`,
+`pyproject.toml`'s original `mcp` extras comment all pointed at it).
+Phase 5 also asks for a dedicated `mcp_server/` package.
+
+**Decision.** Both exist, in the same relationship as `cli.py` to
+`analyzer`/`generator`: root `server.py` is a few lines — `from
+mcp_server.server import main` — and is what `[project.scripts]` and
+direct `python server.py` invocation both use. All real logic (the FastMCP
+instance, tool definitions, handlers, error classification, logging setup)
+lives in `mcp_server/`.
+
+**Why.** Preserves every existing reference to "`server.py` is the MCP
+entry point" from Phases 1–4 while still satisfying Phase 5's explicit
+request for a dedicated package — the two aren't in tension once `server.py`
+is understood as the thin launcher, exactly like `cli.py` already is for
+the analysis engine.
+
+**Consequence.** `save-your-tokens-mcp` (the installed console script) and
+`python server.py` (running from source) are equivalent; both end up
+calling `mcp_server.server.main()`.

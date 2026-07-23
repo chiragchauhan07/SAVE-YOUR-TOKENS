@@ -9,13 +9,16 @@ before making changes.
 
 It analyses a software repository **deterministically** (`analyzer/`) and
 generates an AI-native Knowledge Base — twelve cross-referenced Markdown
-files in `.ai-context/` (`generator/`), this project's primary output. An
-MCP-compatible coding agent (Claude Code, Cursor, ...) reads those files to
-understand a codebase quickly, instead of rediscovering its structure by
-searching from scratch every session.
+files in `.ai-context/` (`generator/`), this project's primary output —
+exposed to AI coding assistants through the Model Context Protocol
+(`mcp_server/`). An MCP-compatible coding agent (Claude Code, Cursor, ...)
+calls the server or reads the generated files to understand a codebase
+quickly, instead of rediscovering its structure by searching from scratch
+every session.
 
 It is a **repository intelligence engine**, not a coding agent and not a
-replacement for one.
+replacement for one. Phase 5 (see below) made it a production-ready MCP
+server — this is the project's first production-ready release.
 
 ## Non-negotiable rules
 
@@ -24,13 +27,17 @@ replacement for one.
    feature seems to need an LLM, it belongs in a future optional layer, not in
    the engine. This constraint is the product, not a limitation.
 2. **The engine never depends on anything downstream.** `analyzer/` must not
-   import `server.py`, `cli.py`, `generator/`, or any MCP library. The
-   dependency arrow points one way: `analyzer/ <- generator/ <- {cli.py,
-   server.py}`. `generator/` may import only `analyzer.models` — never
-   `analyzer.scanner`, `analyzer.detectors` or `analyzer.intelligence`
-   internals (D-028): it consumes an already-fully-populated `Project` and
-   nothing else. It never re-scans, re-parses an AST, or reads a repository
-   file directly.
+   import `server.py`, `cli.py`, `generator/`, `mcp_server/`, or any MCP
+   library. The dependency arrow points one way: `analyzer/ <- generator/
+   <- mcp_server/ <- server.py`, and `analyzer/ <- cli.py`,
+   `generator/ <- cli.py`. `generator/` may import only `analyzer.models`
+   — never `analyzer.scanner`, `analyzer.detectors` or
+   `analyzer.intelligence` internals (D-028): it consumes an
+   already-fully-populated `Project` and nothing else. `mcp_server/` may
+   import only the public APIs of `analyzer/` and `generator/` — never
+   scan, parse an AST, or duplicate any business logic (D-041). None of
+   the three re-scans, re-parses, or reads a repository file directly
+   beyond what the engine itself already does.
 3. **Determinism.** Two scans of an unchanged repository must produce identical
    output. Sort before returning. Never let dict or filesystem ordering leak
    into results.
@@ -54,6 +61,14 @@ replacement for one.
    module's class list) — never a function body, a class implementation, or
    a pasted file. Every generated fact must trace back to a `Project` field;
    nothing in `generator/` invents or infers new information.
+8. **The MCP server never leaks internals to a client.** Every tool in
+   `mcp_server/tools.py` catches its own exceptions and returns a safe,
+   typed `{"success": false, "error": {...}}` — never a raw exception
+   message or a traceback (D-035, confirmed necessary by direct testing:
+   FastMCP's own exception wrapping echoes `str(exception)` verbatim). The
+   server must never crash on a client-supplied path, and stdout is
+   reserved for the protocol stream — logging goes to stderr only, ever
+   (D-038).
 
 ## Layout
 
@@ -104,24 +119,46 @@ generator/         Phase 4: Project -> AI Knowledge Base. Top-level package,
   __init__.py            generate_knowledge_base() (pure) and
                        write_knowledge_base() (writes to disk) orchestrate
                        all twelve renderers.
+mcp_server/        Phase 5: expose analyzer/ + generator/ over MCP. Top-level
+                   package (D-041), same reasoning as generator/ (D-028).
+                   An adapter: almost no logic of its own.
+  models.py            ErrorType (enum), ToolError — this layer's own
+                       response types, not discovered facts.
+  errors.py             classify_exception(): maps a caught exception to a
+                       safe ToolError. Only place that decides what's safe
+                       to tell a client.
+  utils.py              build_repository_summary() (shared by two tools —
+                       D-036), build_health_status(). No MCP SDK import.
+  handlers.py            Pure business logic: calls analyzer.analyze_
+                       repository() / generator.generate_knowledge_base().
+                       No MCP SDK import — testable directly.
+  tools.py               The only module that imports the MCP SDK
+                       (mcp.server.fastmcp.FastMCP). 4 tools:
+                       analyze_repository, repository_summary,
+                       generate_knowledge_base, health_check. Every tool
+                       catches its own exceptions (D-035).
+  server.py              Stdio run loop + logging setup (stderr only,
+                       D-038).
 cli.py             Thin CLI over the engine + generator. `scan` inspects;
                    `generate` writes the Knowledge Base. Not the product.
-server.py          MCP entry point. Placeholder until Phase 5.
+server.py          MCP entry point — thin shim over mcp_server/ (D-043),
+                   same relationship cli.py has to analyzer/generator.
 tests/             pytest, no fixtures beyond tmp_path.
 sample_repo/       Small fake repo for eyeballing CLI output.
-docs/              Architecture, roadmap, decisions, standards.
+docs/              Architecture, roadmap, decisions, standards, MCP_SERVER.md.
 ```
 
 ## Current state
 
-**Phase 1 through 4 are complete.** The engine scans a repository (Phase 1),
-identifies what it is — languages, frameworks, package managers, build
-tools, CI/CD, containerization, environment surfaces, overall repository
-type (Phase 2) — and understands its internal Python structure: entry
-points, import graph, module metadata, routes, database models,
-authentication, configuration, module dependencies, evidence-ranked
-important files (Phase 3). `analyzer.analyze_repository()` is the one-call
-composition of all three; `Project` is the contract Phase 4 consumes.
+**Phases 1 through 5 are complete — first production-ready release.** The
+engine scans a repository (Phase 1), identifies what it is — languages,
+frameworks, package managers, build tools, CI/CD, containerization,
+environment surfaces, overall repository type (Phase 2) — and understands
+its internal Python structure: entry points, import graph, module metadata,
+routes, database models, authentication, configuration, module
+dependencies, evidence-ranked important files (Phase 3).
+`analyzer.analyze_repository()` is the one-call composition of all three;
+`Project` is the contract Phase 4 and Phase 5 both consume.
 
 The generator (Phase 4) turns that `Project` into the `.ai-context/`
 Knowledge Base — twelve cross-referenced Markdown files, this project's
@@ -129,8 +166,15 @@ primary output. `python cli.py generate <path>` writes it;
 `generator.generate_knowledge_base(project)` returns it as
 `{filename: markdown}` without touching disk.
 
-Phase 5 (the MCP server: exposing `analyze_repository()` and the generator
-as MCP tools) is next. See `docs/ROADMAP.md`.
+The MCP server (Phase 5, `mcp_server/`) exposes both over the Model Context
+Protocol as four tools (`analyze_repository`, `repository_summary`,
+`generate_knowledge_base`, `health_check`), stdio transport, using the
+official MCP Python SDK. `python server.py` or the installed
+`save-your-tokens-mcp` console script runs it. It produces byte-identical
+Knowledge Bases to the CLI, since both call the same underlying functions.
+
+No further phases are currently planned; see `docs/ROADMAP.md` for possible
+future work (Phase 6: caching, incremental rescans).
 
 ## Conventions
 
@@ -155,6 +199,13 @@ as MCP tools) is next. See `docs/ROADMAP.md`.
 - Cross-reference links (`generator/navigation.py::RELATED_DOCUMENTS`) are a
   static adjacency table, same "rules as data" principle as
   `analyzer/constants.py` (D-006) and `analyzer/detectors/signatures.py`.
+- Phase 5 uses the official MCP Python SDK (`mcp`) — this project's first
+  runtime dependency, scoped to `mcp_server/` only (D-039). `analyzer/` and
+  `generator/` stay dependency-free.
+- MCP tools never trust the SDK's own exception-to-error conversion for
+  safety — every tool catches exceptions itself
+  (`mcp_server/errors.py::classify_exception`) and returns a sanitised
+  response (D-035).
 - Docstrings explain *why*; the code already says *what*.
 
 ## Verifying packaging changes
@@ -183,9 +234,10 @@ Full detail in `docs/CODING_STANDARDS.md`.
 python cli.py scan .              # human summary
 python cli.py scan . --json       # machine-readable
 python cli.py generate .          # write .ai-context/ Knowledge Base
+python server.py                  # run the MCP server over stdio
 python -m pytest -q               # test suite
 ruff check .                      # lint
-mypy analyzer/ generator/ cli.py server.py --ignore-missing-imports
+mypy analyzer/ generator/ mcp_server/ cli.py server.py --ignore-missing-imports
 ```
 
 ## Before you finish a change

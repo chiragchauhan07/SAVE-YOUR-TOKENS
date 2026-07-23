@@ -28,20 +28,8 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import (
-    DatabaseModel,
-    Detection,
-    EntryPoint,
-    ImportantFile,
-    ImportEdge,
-    LanguageStat,
-    ModuleDependency,
-    ModuleInfo,
-    Project,
-    Route,
-    __version__,
-    analyze_repository,
-)
+from analyzer import Detection, Project, __version__, analyze_repository
+from analyzer.serialization import project_to_dict
 from analyzer.utils import human_readable_size
 from generator import write_knowledge_base
 
@@ -75,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _run_scan(project: Project, args: argparse.Namespace) -> int:
     if args.json:
-        json.dump(_as_dict(project), sys.stdout, indent=2)
+        json.dump(project_to_dict(project), sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:
         _print_summary(project)
@@ -224,137 +212,6 @@ def _print_detections(label: str, detections: tuple[Detection, ...]) -> None:
     print(f"\n{label}:")
     for detection in detections:
         print(f"  {detection.name}")
-
-
-def _detection_dict(detection: Detection) -> dict:
-    return {
-        "name": detection.name,
-        "confidence": detection.confidence.name,
-        "evidence": list(detection.evidence),
-    }
-
-
-def _language_dict(language: LanguageStat) -> dict:
-    return {
-        "name": language.name,
-        "file_count": language.file_count,
-        "size_bytes": language.size_bytes,
-        "percentage": language.percentage,
-    }
-
-
-def _entry_point_dict(entry_point: EntryPoint) -> dict:
-    return {
-        "file": str(entry_point.file),
-        "kind": entry_point.kind,
-        "symbol": entry_point.symbol,
-        "confidence": entry_point.confidence.name,
-        "evidence": list(entry_point.evidence),
-    }
-
-
-def _route_dict(route: Route) -> dict:
-    return {
-        "method": route.method,
-        "path": route.path,
-        "handler": route.handler,
-        "file": str(route.file),
-        "framework": route.framework,
-    }
-
-
-def _database_model_dict(model: DatabaseModel) -> dict:
-    return {
-        "name": model.name,
-        "orm": model.orm,
-        "table_name": model.table_name,
-        "file": str(model.file),
-        "fields": list(model.fields),
-        "evidence": list(model.evidence),
-    }
-
-
-def _module_dict(module: ModuleInfo) -> dict:
-    return {
-        "file": str(module.file),
-        "classes": list(module.classes),
-        "functions": list(module.functions),
-        "async_functions": list(module.async_functions),
-        "constants": list(module.constants),
-        "exports": list(module.exports),
-    }
-
-
-def _import_edge_dict(edge: ImportEdge) -> dict:
-    return {
-        "file": str(edge.file),
-        "module": edge.module,
-        "is_internal": edge.is_internal,
-        "resolved_file": str(edge.resolved_file) if edge.resolved_file else None,
-    }
-
-
-def _module_dependency_dict(dependency: ModuleDependency) -> dict:
-    return {"source": str(dependency.source), "target": str(dependency.target)}
-
-
-def _important_file_dict(important_file: ImportantFile) -> dict:
-    return {
-        "file": str(important_file.file),
-        "score": important_file.score,
-        "reasons": list(important_file.reasons),
-    }
-
-
-def _as_dict(project: Project) -> dict:
-    """Convert an analysis result to JSON-serialisable primitives."""
-    stats = project.stats
-    return {
-        "name": project.name,
-        "root": str(project.root),
-        "repository_type": (
-            _detection_dict(project.repository_type)
-            if project.repository_type
-            else None
-        ),
-        "languages": [_language_dict(lang) for lang in project.languages],
-        "frameworks": [_detection_dict(d) for d in project.frameworks],
-        "package_managers": [_detection_dict(d) for d in project.package_managers],
-        "build_tools": [_detection_dict(d) for d in project.build_tools],
-        "ci_providers": [_detection_dict(d) for d in project.ci_providers],
-        "container_tools": [_detection_dict(d) for d in project.container_tools],
-        "environment_files": [_detection_dict(d) for d in project.environment_files],
-        "entry_points": [_entry_point_dict(ep) for ep in project.entry_points],
-        "modules": [_module_dict(m) for m in project.modules],
-        "imports": [_import_edge_dict(edge) for edge in project.imports],
-        "circular_imports": [list(cycle) for cycle in project.circular_imports],
-        "routes": [_route_dict(r) for r in project.routes],
-        "database_models": [_database_model_dict(m) for m in project.database_models],
-        "authentication": [_detection_dict(d) for d in project.authentication],
-        "configuration": [_detection_dict(d) for d in project.configuration],
-        "module_dependencies": [
-            _module_dependency_dict(dep) for dep in project.module_dependencies
-        ],
-        "important_files": [_important_file_dict(f) for f in project.important_files],
-        "stats": {
-            "total_files": stats.total_files,
-            "total_directories": stats.total_directories,
-            "total_size_bytes": stats.total_size_bytes,
-            "files_by_extension": stats.files_by_extension,
-            "largest_files": [
-                {"path": str(file.path), "size_bytes": file.size_bytes}
-                for file in stats.largest_files
-            ],
-        },
-        "files": [
-            {
-                "path": str(file.path),
-                "size_bytes": file.size_bytes,
-                "extension": file.extension,
-            }
-            for file in project.files
-        ],
-    }
 
 
 if __name__ == "__main__":

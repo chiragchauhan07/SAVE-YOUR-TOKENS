@@ -6,8 +6,12 @@ The **Analysis Engine (`analyzer/`) is the reusable core.** It discovers
 knowledge and never depends on anything downstream. The **Knowledge Base
 (`generator/`) is the primary output** — the canonical, AI-native
 representation of a repository's structure that the rest of the project
-exists to produce. Everything else (CLI, MCP) is an interface onto one or
-both: the analyzer discovers, the generator organizes, interfaces expose.
+exists to produce. The **MCP Integration Layer (`mcp_server/`) is an
+adapter, not a third analysis phase** — it exposes the engine and generator
+to AI coding assistants and contains almost no logic of its own. Everything
+downstream of the engine and generator (CLI, MCP, a future web UI) is an
+interface onto one or both: the analyzer discovers, the generator organizes,
+interfaces expose.
 
 ```
 Repository
@@ -30,6 +34,13 @@ Repository
 │    project's primary output)              │
 └───────────────────────────────────────────┘
     ↓
+┌───────────────────────────────────────────┐
+│ MCP Integration Layer  (mcp_server/)      │
+│   4 tools: analyze_repository,            │
+│   repository_summary,                     │
+│   generate_knowledge_base, health_check   │
+└───────────────────────────────────────────┘
+    ↓
 ┌──────────┬──────────┬───────────────────┐
 │ CLI      │ MCP      │ Future: web, API  │
 └──────────┴──────────┴───────────────────┘
@@ -42,22 +53,27 @@ Claude Code · Cursor · any MCP client
 Dependencies point **inward, one way only**:
 
 ```
+mcp_server/  ──→ analyzer/, generator/  (only their public APIs)
 cli.py       ──→ analyzer/, generator/
-server.py    ──→ analyzer/, generator/
+server.py    ──→ mcp_server/
 generator/   ──→ analyzer/models  (nothing else in analyzer/)
 analyzer/    ──→ (standard library only)
 ```
 
-`analyzer/` must never import `cli.py`, `server.py`, `generator/`, or any MCP
-or CLI library. `generator/` must never scan a repository, parse an AST, or
-import anything from `analyzer/` beyond `analyzer.models` — it consumes an
-already-fully-populated `Project` and nothing else (D-028). Enforcing this
-is what keeps the engine and the generator each reusable by interfaces that
-do not exist yet.
+`analyzer/` must never import `cli.py`, `server.py`, `generator/`,
+`mcp_server/`, or any MCP or CLI library. `generator/` must never scan a
+repository, parse an AST, or import anything from `analyzer/` beyond
+`analyzer.models` — it consumes an already-fully-populated `Project` and
+nothing else (D-028). `mcp_server/` must never scan, parse, or duplicate
+analysis logic — it calls `analyzer.analyze_repository()` and
+`generator.generate_knowledge_base()` directly and shapes their results
+(D-041). Enforcing this is what keeps the engine, the generator, and the
+MCP layer each reusable independently of the others.
 
 If the MCP layer needs new behaviour, that behaviour goes **into the engine
 or the generator** and is called from the adapter. Logic never accumulates
-in the adapter.
+in the adapter — `mcp_server/` stays thin by construction, not by
+discipline alone.
 
 ## Layers
 
@@ -210,12 +226,54 @@ absent file is ambiguous, an explicit "No routes detected." is a fact
 narrative prose — the reader is a language model with a budget, and Rule 1
 of the phase forbids copying source code into any of it.
 
-### 5. MCP Server — Phase 5
+### 5. MCP Integration Layer — implemented
 
-**Responsibility:** expose the engine over the Model Context Protocol.
+**Responsibility:** expose the engine and generator over the Model Context
+Protocol. A thin adapter — tool definitions, error translation, response
+shaping — and nothing else. See [docs/MCP_SERVER.md](MCP_SERVER.md) for
+installation, client configuration and the full tool reference.
 
-A thin adapter. Tool definitions, argument validation, error translation, and
-nothing else.
+Four tools (`mcp_server/tools.py`), each calling exactly one `handlers.py`
+function:
+
+- `analyze_repository` — the primary tool: analyse, and optionally also
+  generate (and optionally write) the Knowledge Base, from one analysis
+  pass.
+- `repository_summary` — the fast path: analysis only, no generation.
+- `generate_knowledge_base` — generate and write the Knowledge Base;
+  returns file names and byte counts, never document content (D-040).
+- `health_check` — package, MCP SDK and environment versions.
+
+Layered the same way as the previous two phases:
+
+- `handlers.py` — pure business logic, zero MCP SDK imports, callable and
+  testable directly. Calls `analyzer.analyze_repository()` and
+  `generator.generate_knowledge_base()`/`write_documents()` — never a
+  second scan or a second render for one tool call.
+- `tools.py` — the only module that imports the MCP SDK
+  (`mcp.server.fastmcp.FastMCP`). Every tool wraps its handler call in
+  `_run()`, which catches every exception itself rather than trusting
+  FastMCP's own error wrapping, confirmed by direct testing to echo a raw
+  exception message verbatim (D-035).
+- `errors.py` / `models.py` — `classify_exception()` maps a caught
+  exception to a small, closed `ErrorType` enum and a safe `ToolError`
+  message; nothing about the original exception (beyond the two
+  already-safe stdlib cases) reaches a client.
+- `utils.py` — `build_repository_summary()` (shared by `analyze_repository`
+  and `repository_summary` — D-036) and `build_health_status()`.
+- `server.py` — the stdio run loop and logging setup. stdout is reserved
+  for the protocol stream; all logging goes to stderr only, `WARNING` by
+  default (D-038).
+
+The root `server.py` is a thin shim (`from mcp_server.server import main`),
+the same relationship `cli.py` has to `analyzer`/`generator` (D-043).
+
+**Determinism carries through unchanged:** the MCP layer runs the same
+`analyze_repository()`/`generate_knowledge_base()` functions the CLI runs,
+so a Knowledge Base generated via `generate_knowledge_base` and one
+generated via `python cli.py generate` are byte-identical for the same
+repository — verified directly in
+`tests/test_mcp_server.py::test_mcp_generated_knowledge_base_matches_cli_generated_knowledge_base`.
 
 ## Data model
 
@@ -285,6 +343,9 @@ A hard requirement, not a nice-to-have.
 - Generated Knowledge Base files carry no generation timestamp and are
   written with forced LF line endings, so the same `Project` produces
   byte-identical Markdown regardless of host OS (D-032)
+- The MCP layer changes nothing about repository intelligence — it calls
+  the same engine and generator functions as the CLI, so the two interfaces
+  produce byte-identical Knowledge Bases for the same repository
 
 This makes output diffable, cacheable and testable by equality —
 `generate_knowledge_base()` called twice on the same `Project` returns an
@@ -296,6 +357,14 @@ The scanner's one real optimisation is pruning: `os.walk` is given a filtered
 subdirectory list in place, so `node_modules` and `.git` are never entered
 rather than entered and discarded. On a typical JS repository this is the
 difference between thousands of files and hundreds of thousands.
+
+Every layer analyses a repository at most once per call and reuses the
+resulting `Project`: `analyzer.analyze_repository()` composes scan → identify
+→ intelligence into a single pass; `mcp_server`'s `analyze_repository` tool
+reuses that one `Project` for both its summary and (if requested) Knowledge
+Base generation, never re-analysing for the second output
+(`tests/test_mcp_server.py::test_handle_generate_knowledge_base_analyzes_once_not_twice`
+guards this directly).
 
 Nothing else is optimised yet, deliberately. Incremental rescanning and caching
 are Phase 6, to be added when measurement shows they are needed.
