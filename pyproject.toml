@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "save-your-tokens"
+version = "0.1.0"
+description = "An MCP server for AI repository context generation."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+keywords = ["mcp", "static-analysis", "ai", "developer-tools", "context"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Documentation",
+]
+
+# Phase 1 has no runtime dependencies. The analysis engine is standard
+# library only, and stays that way for as long as possible.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+# Populated in Phase 5, when server.py is implemented.
+mcp = []
+
+[project.scripts]
+save-your-tokens = "cli:main"
+
+[tool.setuptools]
+packages = ["analyzer"]
+py-modules = ["cli", "server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+# sample_repo/ is fixture data, not source. It is meant to look like someone
+# else's project, so it is not held to this project's standards.
+extend-exclude = ["sample_repo"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RET", "PTH"]
