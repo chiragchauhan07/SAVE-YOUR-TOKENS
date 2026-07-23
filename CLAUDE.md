@@ -7,10 +7,12 @@ before making changes.
 
 **Save your Tokens** — an MCP server for AI repository context generation.
 
-It analyses a software repository **deterministically** and emits concise,
-AI-optimised context files into `.ai-context/`. An MCP-compatible coding agent
-(Claude Code, Cursor, ...) reads those files to understand a codebase quickly,
-instead of rediscovering its structure by searching from scratch every session.
+It analyses a software repository **deterministically** (`analyzer/`) and
+generates an AI-native Knowledge Base — twelve cross-referenced Markdown
+files in `.ai-context/` (`generator/`), this project's primary output. An
+MCP-compatible coding agent (Claude Code, Cursor, ...) reads those files to
+understand a codebase quickly, instead of rediscovering its structure by
+searching from scratch every session.
 
 It is a **repository intelligence engine**, not a coding agent and not a
 replacement for one.
@@ -21,9 +23,14 @@ replacement for one.
    anywhere in `analyzer/`. Every result is produced by static analysis. If a
    feature seems to need an LLM, it belongs in a future optional layer, not in
    the engine. This constraint is the product, not a limitation.
-2. **The engine never depends on MCP.** `analyzer/` must not import `server.py`
-   or any MCP library. The dependency arrow points one way:
-   `analyzer/ <- server.py` and `analyzer/ <- cli.py`.
+2. **The engine never depends on anything downstream.** `analyzer/` must not
+   import `server.py`, `cli.py`, `generator/`, or any MCP library. The
+   dependency arrow points one way: `analyzer/ <- generator/ <- {cli.py,
+   server.py}`. `generator/` may import only `analyzer.models` — never
+   `analyzer.scanner`, `analyzer.detectors` or `analyzer.intelligence`
+   internals (D-028): it consumes an already-fully-populated `Project` and
+   nothing else. It never re-scans, re-parses an AST, or reads a repository
+   file directly.
 3. **Determinism.** Two scans of an unchanged repository must produce identical
    output. Sort before returning. Never let dict or filesystem ordering leak
    into results.
@@ -42,6 +49,11 @@ replacement for one.
    reports, and reports nothing when it has neither. "Unknown" / an empty
    result is always valid. A conventional file name alone is never enough —
    it's corroboration for real evidence, not a substitute for it (D-022).
+7. **The Knowledge Base never copies source code.** `generator/` renders
+   extracted facts (a route's method and path, a model's field names, a
+   module's class list) — never a function body, a class implementation, or
+   a pasted file. Every generated fact must trace back to a `Project` field;
+   nothing in `generator/` invents or infers new information.
 
 ## Layout
 
@@ -72,7 +84,28 @@ analyzer/          The reusable engine. No MCP, no CLI, no I/O beyond reading.
     __init__.py          analyze_intelligence() orchestrates all of the above;
                          must run after identify_project() (reads Project.
                          frameworks / .environment_files).
-cli.py             Thin CLI over the engine. For inspection, not the product.
+generator/         Phase 4: Project -> AI Knowledge Base. Top-level package,
+                   NOT nested under analyzer/ (D-028) — a consumer of the
+                   engine's output, same architectural role as cli.py.
+                   Imports only analyzer.models. Never scans, parses an
+                   AST, or reads a repository file directly.
+  models.py            Document(filename, title, description, body) — the
+                       generator's own output type, not a discovered fact.
+  markdown.py          Plain string-building helpers, not a template
+                       engine (D-026): heading, table, bullet_list, code,
+                       detection_table.
+  navigation.py         RELATED_DOCUMENTS: static adjacency table driving
+                       every file's "## Related Context" footer (D-030).
+  writer.py             The only module that touches disk. Forces LF line
+                       endings so output is byte-identical cross-platform.
+  renderers/            One module per generated file, each exposing
+                       render(project) -> Document (ai_context.py and
+                       index.py additionally take the full document list).
+  __init__.py            generate_knowledge_base() (pure) and
+                       write_knowledge_base() (writes to disk) orchestrate
+                       all twelve renderers.
+cli.py             Thin CLI over the engine + generator. `scan` inspects;
+                   `generate` writes the Knowledge Base. Not the product.
 server.py          MCP entry point. Placeholder until Phase 5.
 tests/             pytest, no fixtures beyond tmp_path.
 sample_repo/       Small fake repo for eyeballing CLI output.
@@ -81,18 +114,23 @@ docs/              Architecture, roadmap, decisions, standards.
 
 ## Current state
 
-**Phase 1, 2 and 3 are complete.** The engine scans a repository (Phase 1),
+**Phase 1 through 4 are complete.** The engine scans a repository (Phase 1),
 identifies what it is — languages, frameworks, package managers, build
 tools, CI/CD, containerization, environment surfaces, overall repository
 type (Phase 2) — and understands its internal Python structure: entry
 points, import graph, module metadata, routes, database models,
 authentication, configuration, module dependencies, evidence-ranked
 important files (Phase 3). `analyzer.analyze_repository()` is the one-call
-composition of all three; `Project` is the contract every later phase
-consumes.
+composition of all three; `Project` is the contract Phase 4 consumes.
 
-Phase 4 (context generation: writing the `.ai-context/` Markdown pack) is
-next. See `docs/ROADMAP.md`.
+The generator (Phase 4) turns that `Project` into the `.ai-context/`
+Knowledge Base — twelve cross-referenced Markdown files, this project's
+primary output. `python cli.py generate <path>` writes it;
+`generator.generate_knowledge_base(project)` returns it as
+`{filename: markdown}` without touching disk.
+
+Phase 5 (the MCP server: exposing `analyze_repository()` and the generator
+as MCP tools) is next. See `docs/ROADMAP.md`.
 
 ## Conventions
 
@@ -111,6 +149,12 @@ next. See `docs/ROADMAP.md`.
   language/framework/tool there, not in a detector function.
 - Phase 3 parses Python with `ast` (stdlib). No source is ever executed —
   no `import`, `exec`, `eval` of analyzed repository code, ever (D-018).
+- Phase 4 builds Markdown with plain string functions
+  (`generator/markdown.py`), not a template engine — no new dependency for
+  what f-strings and list comprehensions already do clearly (D-026).
+- Cross-reference links (`generator/navigation.py::RELATED_DOCUMENTS`) are a
+  static adjacency table, same "rules as data" principle as
+  `analyzer/constants.py` (D-006) and `analyzer/detectors/signatures.py`.
 - Docstrings explain *why*; the code already says *what*.
 
 ## Verifying packaging changes
@@ -118,10 +162,12 @@ next. See `docs/ROADMAP.md`.
 Editable installs (`pip install -e .`) and pytest's `pythonpath = ["."]`
 both bypass `pyproject.toml`'s package list and read straight from the
 source tree — they will not catch a subpackage silently missing from a real
-build (this happened twice: `analyzer.detectors` and `analyzer.intelligence`
-were both absent from actual wheels for a full phase before anyone noticed;
-see D-025). Before changing anything under `[tool.setuptools]`, or after
-adding a new subpackage, verify with an actual build:
+build (this happened three times: `analyzer.detectors`, `analyzer.intelligence`
+and, when `generator/` was added as a new top-level package, `generator`
+itself — all three were absent from actual wheels for a full phase before
+anyone noticed; see D-025, D-033). Before changing anything under
+`[tool.setuptools]`, or after adding a new top-level package or subpackage,
+verify with an actual build:
 
 ```bash
 python -m pip install build -q
@@ -136,8 +182,10 @@ Full detail in `docs/CODING_STANDARDS.md`.
 ```bash
 python cli.py scan .              # human summary
 python cli.py scan . --json       # machine-readable
+python cli.py generate .          # write .ai-context/ Knowledge Base
 python -m pytest -q               # test suite
 ruff check .                      # lint
+mypy analyzer/ generator/ cli.py server.py --ignore-missing-imports
 ```
 
 ## Before you finish a change

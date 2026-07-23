@@ -2,8 +2,12 @@
 
 ## Principle
 
-The **Analysis Engine is the product.** Every other component is an interface
-onto it. MCP is the first such interface, not the centre of the system.
+The **Analysis Engine (`analyzer/`) is the reusable core.** It discovers
+knowledge and never depends on anything downstream. The **Knowledge Base
+(`generator/`) is the primary output** — the canonical, AI-native
+representation of a repository's structure that the rest of the project
+exists to produce. Everything else (CLI, MCP) is an interface onto one or
+both: the analyzer discovers, the generator organizes, interfaces expose.
 
 ```
 Repository
@@ -19,10 +23,12 @@ Repository
 │   Output: Project (typed, frozen)         │
 └───────────────────────────────────────────┘
     ↓
-┌─────────────────────────────────────────┐
-│ Context Generator                       │
-│   Project → Markdown context files      │
-└─────────────────────────────────────────┘
+┌───────────────────────────────────────────┐
+│ Knowledge Base Generator  (generator/)    │
+│   Project → .ai-context/ Markdown         │
+│   (12 files, cross-referenced — the       │
+│    project's primary output)              │
+└───────────────────────────────────────────┘
     ↓
 ┌──────────┬──────────┬───────────────────┐
 │ CLI      │ MCP      │ Future: web, API  │
@@ -36,17 +42,22 @@ Claude Code · Cursor · any MCP client
 Dependencies point **inward, one way only**:
 
 ```
-cli.py     ──→ analyzer/
-server.py  ──→ analyzer/
-analyzer/  ──→ (standard library only)
+cli.py       ──→ analyzer/, generator/
+server.py    ──→ analyzer/, generator/
+generator/   ──→ analyzer/models  (nothing else in analyzer/)
+analyzer/    ──→ (standard library only)
 ```
 
-`analyzer/` must never import `cli.py`, `server.py`, or any MCP or CLI
-library. Enforcing this is what keeps the engine reusable by interfaces that
+`analyzer/` must never import `cli.py`, `server.py`, `generator/`, or any MCP
+or CLI library. `generator/` must never scan a repository, parse an AST, or
+import anything from `analyzer/` beyond `analyzer.models` — it consumes an
+already-fully-populated `Project` and nothing else (D-028). Enforcing this
+is what keeps the engine and the generator each reusable by interfaces that
 do not exist yet.
 
-If the MCP layer needs new behaviour, that behaviour goes **into the engine**
-and is called from the adapter. Logic never accumulates in the adapter.
+If the MCP layer needs new behaviour, that behaviour goes **into the engine
+or the generator** and is called from the adapter. Logic never accumulates
+in the adapter.
 
 ## Layers
 
@@ -150,16 +161,54 @@ logic (a route's handler name is recorded; what the handler does is not).
 Python only for now; a second language is a new sibling package following
 the same one-function-per-concern shape, not a change to this one.
 
-### 4. Generator — Phase 4
+### 4. Generator — implemented
 
-**Responsibility:** turn a fully analysed `Project` into Markdown.
+**Responsibility:** turn a fully analysed `Project` into an AI-native
+Knowledge Base (`.ai-context/`) — twelve cross-referenced Markdown files.
+Never re-scans, re-parses, or re-analyses anything; consumes only
+`analyzer.models.Project` (D-028).
 
-One generator per output file. Generators are pure: `Project` in, string out,
-no filesystem access. A separate writer handles disk I/O, which keeps
-generators trivially testable.
+```
+OVERVIEW.md          Repository type, languages, frameworks, tech stack
+PROJECT_STRUCTURE.md File/directory statistics, largest files
+ARCHITECTURE.md      Entry points, top important files, dependency summary
+MODULES.md           Classes/functions/constants/exports, one row per module
+DEPENDENCIES.md      Full import graph, circular imports, external packages
+API_ROUTES.md        Detected HTTP routes
+DATABASE.md          Detected ORM/schema models
+AUTHENTICATION.md    Detected auth mechanisms
+CONFIGURATION.md     Settings modules, config classes, env/dotenv usage
+IMPORTANT_FILES.md   The complete evidence-ranked file list
+AI_CONTEXT.md        Primary entry point: reading order, critical files,
+                      entry points, important directories, excluded dirs
+INDEX.md             Table of contents for the whole Knowledge Base
+```
 
-Output must be **information-dense**: tables, bullet lists, deterministic
-facts. Not narrative prose. The reader is a language model with a budget.
+Three layers, one function per file:
+
+- `renderers/` — one module per generated file, each exposing a single
+  `render(project) -> Document` (or, for `ai_context`/`index`, `render(project,
+  documents) -> Document` — the only two that need the full document list).
+  Pure functions: no filesystem access, trivially unit-testable.
+- `markdown.py` — plain string-building helpers (`heading`, `table`,
+  `bullet_list`, `detection_table`), not a template engine (D-026).
+- `navigation.py` — the "Related Context" cross-reference footer every
+  document ends with, driven by a static adjacency table
+  (`RELATED_DOCUMENTS`) rather than computed per document (D-030) — same
+  "rules as data" principle as `analyzer/constants.py` (D-006).
+- `writer.py` — the only place that touches disk. Forces LF line endings so
+  output is byte-identical across platforms (D-032).
+
+`generate_knowledge_base(project) -> dict[str, str]` (in `generator/__init__.py`)
+is pure and side-effect-free; `write_knowledge_base(project, output_dir)`
+additionally writes the files. Kept separate so a future MCP tool can hand
+back Knowledge Base content without anything touching the filesystem.
+
+**Every file is always generated**, even when a category is empty — an
+absent file is ambiguous, an explicit "No routes detected." is a fact
+(D-029). Output is information-dense: tables and bullet lists, not
+narrative prose — the reader is a language model with a budget, and Rule 1
+of the phase forbids copying source code into any of it.
 
 ### 5. MCP Server — Phase 5
 
@@ -233,8 +282,13 @@ A hard requirement, not a nice-to-have.
 - Extension counts are sorted by frequency, ties broken by name
 - Paths are stored POSIX-style so Windows and Unix scans agree
 - No timestamps, absolute host paths or hash seeds leak into results
+- Generated Knowledge Base files carry no generation timestamp and are
+  written with forced LF line endings, so the same `Project` produces
+  byte-identical Markdown regardless of host OS (D-032)
 
-This makes output diffable, cacheable and testable by equality.
+This makes output diffable, cacheable and testable by equality —
+`generate_knowledge_base()` called twice on the same `Project` returns an
+identical `dict`, asserted directly in `tests/test_generator.py`.
 
 ## Performance
 

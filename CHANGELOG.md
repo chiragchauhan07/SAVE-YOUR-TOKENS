@@ -7,8 +7,59 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Phase 4 — context generation (`.ai-context/` Markdown pack). See
-[docs/ROADMAP.md](docs/ROADMAP.md).
+Phase 5 — MCP server. See [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## [0.4.0] — 2026-07-23
+
+Phase 4: the AI Knowledge Base Generator — this project's primary output.
+Turns a fully analysed `Project` into a deterministic, cross-referenced
+`.ai-context/` Markdown Knowledge Base, without re-scanning, re-parsing, or
+copying any source code.
+
+### Added
+
+- `generator/` — a new top-level package (sibling to `analyzer/`, not
+  nested under it — see D-028), consuming only `analyzer.models.Project`.
+  `renderers/` holds one module per generated file; `markdown.py` is plain
+  string-building helpers, not a template engine (D-026); `navigation.py`
+  drives the "Related Context" cross-reference footer from a static
+  adjacency table (D-030); `writer.py` is the only place that touches disk.
+- `generate_knowledge_base(project) -> dict[str, str]` — pure, side-effect
+  free. `write_knowledge_base(project, output_dir)` additionally writes to
+  disk. Both exported from `generator`.
+- Twelve generated files: `OVERVIEW.md`, `PROJECT_STRUCTURE.md`,
+  `ARCHITECTURE.md`, `MODULES.md`, `DEPENDENCIES.md`, `API_ROUTES.md`,
+  `DATABASE.md`, `AUTHENTICATION.md`, `CONFIGURATION.md`,
+  `IMPORTANT_FILES.md`, `AI_CONTEXT.md` (the primary entry point for an AI
+  assistant — at-a-glance metrics, recommended reading order, entry points,
+  critical files, important directories, and directories already excluded
+  from analysis) and `INDEX.md` (table of contents).
+- Every file is always generated, even when a category is empty — an empty
+  `API_ROUTES.md` says "No API routes detected." rather than not existing
+  (D-029), so the file set is fixed and every cross-reference target is
+  always valid.
+- `cli.py generate [path] [--output DIR]` — runs the full analysis pipeline
+  and writes the Knowledge Base; prints the files written.
+- 43 new unit tests: every renderer's content, empty and partial
+  repositories (no routes / no database / no authentication), determinism
+  (identical `Project` → identical output, twice), cross-reference
+  integrity (every `Related Context` link target is a real generated file,
+  and every generated file has one), a 200-module synthetic repository for
+  scale, and writer behaviour (LF line endings, directory creation).
+
+### Notes
+
+- Still no LLM anywhere, still no source code copied into any generated
+  file — only extracted facts, never function bodies or file contents.
+- Generated Markdown carries no timestamp and is written with forced LF
+  line endings, so it is byte-identical across platforms for an unchanged
+  repository (D-032).
+- Dogfooded against this repository and `sample_repo/`; every generated
+  file was reviewed manually as part of this phase's verification.
+- Packaging: `generator/` needed its own entry in `pyproject.toml`'s
+  `packages.find` include list — the same class of bug D-025 fixed for
+  `analyzer.detectors`/`analyzer.intelligence`, caught this time by
+  building a real wheel *before* considering the phase done (D-033).
 
 ## [0.3.0] — 2026-07-23
 
@@ -186,7 +237,8 @@ Phase 1: the repository analysis foundation.
 - File contents are not read in this phase; the scanner reports facts about
   files, not conclusions about the project.
 
-[Unreleased]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/releases/tag/v0.1.0

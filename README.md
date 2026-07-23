@@ -5,11 +5,10 @@
 Turn a software repository into a compact, structured briefing that an AI
 coding agent can read in seconds instead of rediscovering by search.
 
-> **Status: Phase 3 — Code Intelligence Engine.** The repository scanner,
-> identification detectors, and Python code intelligence (entry points,
-> routes, database models, authentication, configuration, import graph,
-> important-file ranking) are implemented and tested. Context generation and
-> the MCP server are not built yet. See the [Roadmap](#roadmap).
+> **Status: Phase 4 — AI Knowledge Base Generator.** The repository scanner,
+> identification detectors, Python code intelligence, and the `.ai-context/`
+> Knowledge Base generator — this project's primary output — are implemented
+> and tested. The MCP server is not built yet. See the [Roadmap](#roadmap).
 
 ---
 
@@ -27,26 +26,34 @@ understanding that disappears when the session ends.
 ## The approach
 
 Precompute the answers. `Save your Tokens` analyses a repository statically and
-writes an AI-optimised context pack:
+writes an AI-native Knowledge Base:
 
 ```
 .ai-context/
-├── OVERVIEW.md            What this project is
-├── PROJECT_STRUCTURE.md   Directory map, annotated
-├── ARCHITECTURE.md        Layers and how they connect
-├── ENTRY_POINTS.md        Where execution begins
+├── AI_CONTEXT.md          Start here — reading order, entry points, critical files
+├── INDEX.md               Table of contents for the whole Knowledge Base
+├── OVERVIEW.md            Repository type, languages, frameworks, tech stack
+├── PROJECT_STRUCTURE.md   File/directory statistics, largest files
+├── ARCHITECTURE.md        Entry points, most important files, dependency summary
+├── MODULES.md             Classes, functions, constants, exports — per module
+├── DEPENDENCIES.md        Full import graph, circular imports, external packages
 ├── API_ROUTES.md          Discovered HTTP routes
-├── DATABASE.md            Models, schemas, migrations
-├── DEPENDENCIES.md        What it is built on
-├── CONFIGURATION.md       Env vars and config surfaces
-├── IMPORTANT_FILES.md     The files that actually matter
-└── AI_CONTEXT.md          Condensed entry point for agents
+├── DATABASE.md            Detected ORM/schema models
+├── AUTHENTICATION.md      Detected authentication mechanisms
+├── CONFIGURATION.md       Settings modules, config classes, env/dotenv usage
+└── IMPORTANT_FILES.md     The complete evidence-ranked file list
 ```
 
-An agent reads this first and starts from an accurate mental model.
+Every file ends with a **Related Context** section linking to related files —
+the Knowledge Base behaves like an interconnected graph, not isolated
+documents. An agent reads `AI_CONTEXT.md` first and starts from an accurate
+mental model before opening a single source file.
 
 This does not eliminate repository exploration — it removes the *repeated,
-mechanical* part of it and replaces it with a structured project map.
+mechanical* part of it and replaces it with a structured, navigable map.
+Nothing in the Knowledge Base ever copies source code: it represents
+*extracted* facts (a route's method and path, a model's fields, a module's
+class names), never function bodies or file contents.
 
 ## No LLM
 
@@ -62,7 +69,7 @@ the core.
 
 ## Features
 
-**Available now (Phase 1 + 2 + 3)**
+**Available now (Phase 1 + 2 + 3 + 4)**
 
 - Recursive repository scanning with directory pruning
 - Deterministic, sorted, reproducible output
@@ -83,12 +90,14 @@ the core.
   metadata, FastAPI/Flask/Django routes, SQLAlchemy/Pydantic/Django ORM
   models, authentication mechanisms, configuration surfaces, module
   dependency relationships, evidence-ranked important files
+- AI-native Knowledge Base generation: twelve deterministic, cross-referenced
+  Markdown files in `.ai-context/`, every file always present with graceful
+  "none detected" content, never a copy of source code
 - Typed `Project` model as the engine's public contract
-- CLI with human and JSON output
+- CLI with human and JSON output, plus `generate` for the Knowledge Base
 
 **Planned**
 
-- Context file generation (Phase 4)
 - MCP server (Phase 5)
 
 ## Installation
@@ -181,10 +190,37 @@ python cli.py scan /path/to/repository --json
 
 Options: `--ignore DIR` (repeatable), `--include-hidden`, `--follow-symlinks`.
 
-Or use the engine directly:
+Generate the Knowledge Base:
+
+```bash
+python cli.py generate /path/to/repository
+```
+
+```
+Generated 12 files in /path/to/repository/.ai-context
+  AI_CONTEXT.md
+  API_ROUTES.md
+  ARCHITECTURE.md
+  AUTHENTICATION.md
+  CONFIGURATION.md
+  DATABASE.md
+  DEPENDENCIES.md
+  IMPORTANT_FILES.md
+  INDEX.md
+  MODULES.md
+  OVERVIEW.md
+  PROJECT_STRUCTURE.md
+```
+
+`--output DIR` writes elsewhere instead of `<path>/.ai-context`.
+
+Or use the engine and generator directly:
 
 ```python
+from pathlib import Path
+
 from analyzer import analyze_repository
+from generator import generate_knowledge_base, write_knowledge_base
 
 project = analyze_repository("/path/to/repository")
 print(project.repository_type)              # Detection(name='REST API', ...)
@@ -192,6 +228,9 @@ print([f.name for f in project.frameworks])  # ['FastAPI']
 print(project.languages)                     # (LanguageStat(name='Python', ...), ...)
 print(project.routes)                        # (Route(method='GET', path='/users', ...), ...)
 print(project.entry_points)                  # (EntryPoint(kind='fastapi_app', ...), ...)
+
+documents = generate_knowledge_base(project)  # {"OVERVIEW.md": "# Overview\n...", ...}
+write_knowledge_base(project, Path("/path/to/repository/.ai-context"))
 
 # Or run each phase separately:
 from analyzer import scan_repository, identify_project, analyze_intelligence
@@ -206,18 +245,20 @@ project = analyze_intelligence(project)  # entry points, routes, models, ...
 ```
 Repository
     ↓
-Analysis Engine      ← analyzer/   (deterministic, no MCP, no LLM)
-                        scanner → detectors → intelligence
+Analysis Engine        ← analyzer/   (deterministic, no MCP, no LLM)
+                          scanner → detectors → intelligence
     ↓
-Context Generator    ← Phase 4
+Knowledge Base Generator ← generator/   (Project → .ai-context/, the primary output)
     ↓
-MCP Server           ← server.py   (thin adapter)
+MCP Server              ← server.py   (thin adapter)
     ↓
 Claude Code / Cursor / any MCP client
 ```
 
-The engine is the product. MCP is one interface onto it — a CLI, a web app or
-an HTTP API can be added without touching `analyzer/`.
+The engine discovers, the generator organizes, interfaces expose. `generator/`
+consumes only `analyzer.models.Project` — never re-scans, re-parses, or
+touches the analyzed repository's source. A CLI, a web app or an HTTP API can
+be added on top of either without touching `analyzer/` or `generator/`.
 
 Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
@@ -228,8 +269,8 @@ Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | 1 | Repository scanner, models, ignore rules  | Done |
 | 2 | Project Identification Engine             | Done |
 | 3 | Code Intelligence Engine                  | Done |
-| 4 | Context file generation                   | Next |
-| 5 | MCP server                                | Planned |
+| 4 | AI Knowledge Base Generator                | Done |
+| 5 | MCP server                                | Next |
 | 6 | Caching, incremental rescans, packaging   | Planned |
 
 Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -248,6 +289,9 @@ Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 - **Static analysis, never execution.** Source code is parsed (`ast`), never
   imported, `exec`'d or `eval`'d — the tool must be safe to run unattended
   against any repository handed to it.
+- **Discover once, organize separately.** The analysis engine discovers
+  facts; the Knowledge Base generator only organizes and presents them —
+  never re-scans, re-parses, or copies source code into generated output.
 - **No premature optimisation.** Build the current phase well; leave notes for
   the next one.
 

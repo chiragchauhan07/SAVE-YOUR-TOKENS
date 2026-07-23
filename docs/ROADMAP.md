@@ -133,21 +133,46 @@ verifying any future package-boundary change.
 
 ---
 
-## Phase 4 — Context Generation
+## Phase 4 — AI Knowledge Base Generator ✅
 
-**Goal:** write the `.ai-context/` pack.
+**Goal:** turn a fully analysed `Project` into a deterministic, cross-referenced
+`.ai-context/` Knowledge Base — the project's primary output.
 
-- [ ] Generator per output file (10 files, see README)
-- [ ] Pure generators: `Project` in, `str` out
-- [ ] Separate writer for filesystem I/O
-- [ ] Token budgeting — truncate long lists with explicit counts rather than
-      silently
-- [ ] `AI_CONTEXT.md` as the condensed index agents read first
-- [ ] Golden-file tests against `sample_repo/`
+- [x] `generator/` package: one renderer per output file, a pure
+      `generate_knowledge_base()` plus a separate `write_knowledge_base()`
+      for disk I/O
+- [x] Twelve files: `OVERVIEW.md`, `PROJECT_STRUCTURE.md`, `ARCHITECTURE.md`,
+      `MODULES.md`, `DEPENDENCIES.md`, `API_ROUTES.md`, `DATABASE.md`,
+      `AUTHENTICATION.md`, `CONFIGURATION.md`, `IMPORTANT_FILES.md`,
+      `AI_CONTEXT.md` (primary AI entry point), `INDEX.md` (table of contents)
+- [x] Every file always generated, with graceful "none detected" content
+      when a category is empty (D-029)
+- [x] "Related Context" cross-reference footer on every file, driven by a
+      static adjacency table (D-030)
+- [x] Deterministic output: no timestamps, forced LF line endings across
+      platforms (D-032), verified by a same-`Project`-twice equality test
+- [x] `cli.py generate` command
+- [x] 43 new unit tests: every renderer, empty/partial repositories,
+      determinism, cross-reference integrity, a large synthetic repository,
+      writer behaviour
+- [x] Documentation
+- [x] Dogfooded against this repository and `sample_repo/`; output reviewed
+      manually
 
-**Guiding constraint:** the reader is a model with a context budget. Prefer
-tables and lists over prose. A context pack that is expensive to read defeats
-the purpose of the project.
+**Deliberately excluded:** a template engine (plain string-building
+functions instead — D-026), `MODULES.md` pagination/splitting (one flat
+table regardless of repository size — D-027; revisit only once a real large
+repository shows this is actually the bottleneck), token-budget truncation
+of long lists (every list is already the complete, already-deduplicated
+`Project` data; truncating it would contradict "no information should be
+discarded").
+
+**Found during this phase, fixed in this phase:** the same packaging bug
+class as D-025 — `generator/` is a new top-level package, and
+`pyproject.toml`'s `packages.find` include list needed `generator*` added
+explicitly or a real wheel build would have silently dropped it again
+(D-033). Caught by building an actual wheel before considering the phase
+done, not just running the test suite.
 
 ---
 

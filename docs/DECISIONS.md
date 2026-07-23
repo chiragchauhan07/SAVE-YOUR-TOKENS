@@ -536,3 +536,189 @@ happened here across two phases before a real wheel build surfaced it.
 (`python -m build --wheel`), not just an editable install — added to the
 release checklist in `docs/CONTRIBUTING.md`'s spirit; do this before any
 future package boundary change.
+
+---
+
+## D-026 — Plain Markdown-building functions, not a template engine
+
+**Context.** `generator/` needed to turn structured data into Markdown.
+`templates/` was one of the directory names the Phase 4 brief suggested,
+which reads as an invitation to use a templating engine (Jinja2 and
+similar).
+
+**Decision.** `generator/markdown.py` is a handful of plain functions
+(`heading`, `table`, `bullet_list`, `code`, `detection_table`) building
+strings directly. No template files, no templating dependency.
+
+**Why.** Every generated document is a straight, one-pass assembly of
+headings, tables and lists from already-structured data — there is no
+looping-within-loops, conditional-block, or template-inheritance need that
+would justify a templating engine. Adding one would be a new runtime
+dependency (breaking the zero-dependency stance carried since Phase 1) for
+a problem plain f-strings and list comprehensions already solve clearly.
+
+**Consequence.** If a future phase's output genuinely needs nested,
+reusable templates (not just data), revisit this decision explicitly rather
+than accreting ad hoc string formatting past the point it stays readable.
+
+---
+
+## D-027 — MODULES.md is one flat table, not paginated or split per file
+
+**Context.** A repository with hundreds or thousands of modules could make
+`MODULES.md` very large — "avoid giant monolithic files" is an explicit
+Phase 4 principle, and "design an information architecture that scales ...
+to enterprise codebases" is an explicit requirement.
+
+**Decision.** `MODULES.md` stays one table, one row per module, in all
+cases. No per-file sections, no pagination, no size-based splitting.
+
+**Why.** A table is the most token-dense, scannable representation for
+"here is what every module exports" — a heading-per-module layout would be
+*more* verbose for the same information, not less. True pagination
+(multiple files, an index of ranges) is a real feature with its own design
+questions (how many modules per page? by directory? alphabetical?) that
+deserves its own decision once a real enterprise-scale repository shows the
+single table is actually the bottleneck — not speculatively now.
+
+**Consequence.** A genuinely huge repository will produce a genuinely large
+`MODULES.md`. Accepted for this phase; revisit with real data if it becomes
+a problem (`ponytail`-style: a known, named limitation, not a silent one).
+
+---
+
+## D-028 — `generator/` is a top-level package, not a subpackage of `analyzer/`
+
+**Context.** `detectors/` and `intelligence/` both live under `analyzer/`.
+The Knowledge Base generator could follow that same nesting.
+
+**Decision.** `generator/` is a sibling of `analyzer/`, `cli.py` and
+`server.py` — not `analyzer/generator/`.
+
+**Why.** `docs/ARCHITECTURE.md`'s layered diagram drew "Context Generator"
+as a box *separate from* "Analysis Engine" from Phase 1 onward, and the
+Phase 4 philosophy states the distinction explicitly: "the analyzer
+discovers knowledge, the Knowledge Base organizes knowledge." `analyzer/` is
+the reusable engine with no I/O beyond reading; `generator/` reads a
+`Project` and writes Markdown — a consumer of the engine's output, the same
+architectural role as `cli.py`, not part of the engine itself.
+
+**Consequence.** The dependency rule extends cleanly: `generator/` imports
+`analyzer.models` (and only `analyzer.models` — no detector or intelligence
+internals, since everything it needs is already on `Project`); `analyzer/`
+must never import `generator/`, exactly like the existing `cli.py`/`server.py`
+rule (D-002).
+
+---
+
+## D-029 — Every Knowledge Base file is always generated, with graceful "none detected" content
+
+**Context.** Many repositories won't have routes, database models, or
+authentication. The generator could skip writing those files entirely when
+there's nothing to say.
+
+**Decision.** All twelve files are written on every run, regardless of
+content. Empty categories render an explicit "No X detected." message
+instead of being omitted.
+
+**Why.** A missing file is ambiguous — did the generator check and find
+nothing, or did generation simply not cover this category for some other
+reason? An explicit "none detected" is itself a fact worth recording, and a
+fixed file set is simpler to navigate, link to (D-030's cross-reference
+table never needs conditional targets) and test against.
+
+**Consequence.** A CLI-tool repository with no HTTP surface still gets an
+`API_ROUTES.md` that says so in one line. This is intentional, not
+noise — see Rule "never guess" and Rule 3's "avoid fragmented files": a
+present-but-empty file is not fragmentation.
+
+---
+
+## D-030 — Cross-reference links ("Related Context") are a static adjacency table, not computed per document
+
+**Context.** Every generated file needs a "Related Context" footer pointing
+to related files (Rule 4). This could be computed dynamically (e.g. "link
+to whichever files share data with this one") or declared explicitly.
+
+**Decision.** `generator/navigation.py::RELATED_DOCUMENTS` is a hand-written
+`dict[str, tuple[str, ...]]` — same "rules as data" principle as
+`analyzer/constants.py` (D-006) and `analyzer/detectors/signatures.py`.
+
+**Why.** The Knowledge Base has a fixed, small set of files (twelve) whose
+conceptual relationships don't change per repository — `API_ROUTES.md` is
+always related to `AUTHENTICATION.md`, regardless of what any particular
+`Project` contains. A computed "relatedness" heuristic would be guessing at
+a relationship that a two-line table already states with certainty, for a
+graph this size.
+
+**Consequence.** Adding a Knowledge Base file in a future phase means
+adding one row to this table (and confirming both directions read sensibly)
+— checked by `test_related_context_links_are_valid`, which asserts every
+key and value names a file that's actually generated.
+
+---
+
+## D-031 — Environment *file* conventions stay in OVERVIEW.md; CONFIGURATION.md cross-references rather than duplicating
+
+**Context.** Phase 2's `environment_files` (presence of `.env.example` and
+similar) and Phase 3's `configuration` (settings modules, config classes,
+env-loading calls) are both "configuration" in a loose sense.
+
+**Decision.** `OVERVIEW.md` presents `Project.environment_files` (it's part
+of the Phase 2 technology identity card, alongside package managers and
+CI/CD). `CONFIGURATION.md` presents `Project.configuration` and adds one
+line pointing back to `OVERVIEW.md` for the environment files, rather than
+repeating that table.
+
+**Why.** Rule 3 says group closely related information, but also says avoid
+fragmented files — it does not say duplicate the same facts under two
+headings. Each fact has exactly one canonical location; other files link to
+it (this is what "Related Context" and Rule 4's "interconnected graph" are
+for).
+
+**Consequence.** An AI reading only `CONFIGURATION.md` sees a pointer, not
+the data, for environment files specifically — one hop away via the graph,
+by design.
+
+---
+
+## D-032 — Generated files are written with forced LF line endings
+
+**Context.** `Path.write_text()`'s default `newline` behaviour translates
+`\n` to the platform line separator on write — CRLF on Windows. The
+generator itself already builds content with `\n` only.
+
+**Decision.** `generator/writer.py` passes `newline="\n"` explicitly on
+every write.
+
+**Why.** Determinism (Rule 5) means "running the generator twice produces
+identical output" — but it should also mean the *same* output regardless of
+which OS ran it. Without forcing `newline`, an identical `Project` would
+produce byte-different files on Windows versus Linux/macOS, which is the
+same class of problem D-005 already ruled out for scanned file paths.
+
+**Consequence.** Generated Markdown is byte-identical across platforms,
+which also makes golden-file-style diffing meaningful if a future test
+wants it.
+
+---
+
+## D-033 — Packaging: `generator*` added to the auto-discovery include list
+
+**Context.** D-025 fixed `analyzer.detectors`/`analyzer.intelligence` being
+silently dropped from real wheel builds by switching to
+`[tool.setuptools.packages.find]` with `include = ["analyzer*"]`. That
+pattern does not match a new, separate top-level package.
+
+**Decision.** `include = ["analyzer*", "generator*"]`. Verified with an
+actual `python -m build --wheel` (not just an editable install) before this
+phase's commit — same verification step D-025 established.
+
+**Why.** `generator/` is a top-level package by design (D-028), so it needed
+its own discovery pattern; missing this would have reproduced the exact
+Phase 2/3 packaging bug for the phase whose whole purpose is being this
+project's primary output.
+
+**Consequence.** Any future new top-level package needs the same check:
+build a real wheel and confirm its contents before considering the phase
+done, not just `pip install -e .`.

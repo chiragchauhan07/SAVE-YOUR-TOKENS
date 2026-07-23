@@ -1,16 +1,24 @@
 """Command-line interface for the Save your Tokens analysis engine.
 
-Exposes a single command, ``scan``, which scans a repository, identifies it
-(languages, frameworks, package managers, build tools, CI/CD,
-containerization, configuration surfaces) and analyses its internal Python
-structure (entry points, routes, database models, authentication,
-configuration, imports, dependency relationships, important files). It
-exists to exercise and inspect the engine; it is not the product. The MCP
-server (see ``server.py``) is the primary interface.
+Two commands:
+
+- ``scan`` — scan a repository, identify it (languages, frameworks, package
+  managers, build tools, CI/CD, containerization, configuration surfaces)
+  and analyse its internal Python structure (entry points, routes, database
+  models, authentication, configuration, imports, dependency relationships,
+  important files). Prints a summary; exists to exercise and inspect the
+  engine, not as the product.
+- ``generate`` — run the same analysis and write the AI-native Knowledge
+  Base (``.ai-context/`` by default) via ``generator``. This is the
+  project's primary output; see ``docs/ARCHITECTURE.md``.
+
+The MCP server (see ``server.py``) is the primary *interface*, once built.
 
 Usage:
     python cli.py scan /path/to/repo
     python cli.py scan /path/to/repo --json
+    python cli.py generate /path/to/repo
+    python cli.py generate /path/to/repo --output /path/to/output
 """
 
 from __future__ import annotations
@@ -35,6 +43,7 @@ from analyzer import (
     analyze_repository,
 )
 from analyzer.utils import human_readable_size
+from generator import write_knowledge_base
 
 #: How many important files the human-readable summary lists.
 _TOP_IMPORTANT_FILES = 10
@@ -59,11 +68,26 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
+    if args.command == "generate":
+        return _run_generate(project, args)
+    return _run_scan(project, args)
+
+
+def _run_scan(project: Project, args: argparse.Namespace) -> int:
     if args.json:
         json.dump(_as_dict(project), sys.stdout, indent=2)
         sys.stdout.write("\n")
     else:
         _print_summary(project)
+    return 0
+
+
+def _run_generate(project: Project, args: argparse.Namespace) -> int:
+    output_dir = args.output or (args.path / ".ai-context")
+    written = write_knowledge_base(project, output_dir)
+    print(f"Generated {len(written)} files in {output_dir}")
+    for path in written:
+        print(f"  {path.name}")
     return 0
 
 
@@ -75,37 +99,56 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=__version__)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
+
     scan = subparsers.add_parser("scan", help="Scan a repository and report on it.")
-    scan.add_argument(
-        "path",
-        type=Path,
-        nargs="?",
-        default=Path.cwd(),
-        help="Repository to scan (default: current directory).",
-    )
+    _add_analysis_arguments(scan)
     scan.add_argument(
         "--json",
         action="store_true",
         help="Emit machine-readable JSON instead of a summary.",
     )
-    scan.add_argument(
+
+    generate = subparsers.add_parser(
+        "generate", help="Generate the .ai-context/ AI Knowledge Base."
+    )
+    _add_analysis_arguments(generate)
+    generate.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Output directory (default: <path>/.ai-context).",
+    )
+
+    return parser
+
+
+def _add_analysis_arguments(subparser: argparse.ArgumentParser) -> None:
+    """Arguments shared by every command that analyses a repository."""
+    subparser.add_argument(
+        "path",
+        type=Path,
+        nargs="?",
+        default=Path.cwd(),
+        help="Repository to analyse (default: current directory).",
+    )
+    subparser.add_argument(
         "--ignore",
         action="append",
         default=[],
         metavar="DIR",
         help="Extra directory name to ignore. Repeatable.",
     )
-    scan.add_argument(
+    subparser.add_argument(
         "--include-hidden",
         action="store_true",
         help="Include dot-prefixed files and directories.",
     )
-    scan.add_argument(
+    subparser.add_argument(
         "--follow-symlinks",
         action="store_true",
         help="Descend into symlinked directories.",
     )
-    return parser
 
 
 def _print_summary(project: Project) -> None:
