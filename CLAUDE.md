@@ -17,8 +17,12 @@ quickly, instead of rediscovering its structure by searching from scratch
 every session.
 
 It is a **repository intelligence engine**, not a coding agent and not a
-replacement for one. Phase 5 (see below) made it a production-ready MCP
-server — this is the project's first production-ready release.
+replacement for one. Phase 5 made it a production-ready MCP server — this
+project's first production-ready release. Phase 6 added an Incremental
+Intelligence layer (`analyzer/caching/` + `incremental/`) so repeated
+analysis of a mostly-unchanged repository reuses prior work wherever
+that's provably safe, always falling back to a full analysis rather than
+risk an incorrect result.
 
 ## Non-negotiable rules
 
@@ -27,20 +31,34 @@ server — this is the project's first production-ready release.
    feature seems to need an LLM, it belongs in a future optional layer, not in
    the engine. This constraint is the product, not a limitation.
 2. **The engine never depends on anything downstream.** `analyzer/` must not
-   import `server.py`, `cli.py`, `generator/`, `mcp_server/`, or any MCP
-   library. The dependency arrow points one way: `analyzer/ <- generator/
-   <- mcp_server/ <- server.py`, and `analyzer/ <- cli.py`,
-   `generator/ <- cli.py`. `generator/` may import only `analyzer.models`
+   import `server.py`, `cli.py`, `generator/`, `mcp_server/`, `incremental/`,
+   or any MCP library. The dependency arrow points one way: `analyzer/ <-
+   generator/ <- mcp_server/ <- server.py`, and `analyzer/ <- cli.py`,
+   `generator/ <- cli.py`, `{analyzer, generator} <- incremental/ <-
+   {cli.py, mcp_server/}`. `generator/` may import only `analyzer.models`
    — never `analyzer.scanner`, `analyzer.detectors` or
    `analyzer.intelligence` internals (D-028): it consumes an
    already-fully-populated `Project` and nothing else. `mcp_server/` may
-   import only the public APIs of `analyzer/` and `generator/` — never
-   scan, parse an AST, or duplicate any business logic (D-041). None of
-   the three re-scans, re-parses, or reads a repository file directly
-   beyond what the engine itself already does.
+   import only the public APIs of `analyzer/`, `generator/` and
+   `incremental/` — never scan, parse an AST, or duplicate any business
+   logic (D-041). `incremental/` may import only the public APIs of
+   `analyzer/` (including `analyzer.caching`) and `generator/`, and holds
+   the orchestration logic neither of those two is allowed to hold itself
+   (D-051) — same architectural role `mcp_server/` has, extended to a
+   second consumer. `analyzer/caching/` is the one exception to "the
+   engine never depends on anything downstream": it is a subpackage of
+   the engine, not downstream of it, and is free to call
+   `analyzer.intelligence` internals directly (D-044). None of
+   `generator/`, `mcp_server/` or `incremental/` re-scans, re-parses, or
+   reads a repository file directly beyond what the engine itself already
+   does.
 3. **Determinism.** Two scans of an unchanged repository must produce identical
    output. Sort before returning. Never let dict or filesystem ordering leak
-   into results.
+   into results. An incremental analysis/generation and a full one against
+   the same repository state must produce byte-identical output — never
+   trade correctness for the speed incremental analysis buys (D-046,
+   D-050). When a category can't be proven safe to reuse incrementally,
+   fall back to recomputing it in full; never guess that it's still valid.
 4. **Content reading is metadata/structure-only, never execution.** The Phase
    1 scanner never opens a file. Phase 2 detectors read *manifests*
    (`pyproject.toml`, `package.json`, lockfiles) via
@@ -99,6 +117,25 @@ analyzer/          The reusable engine. No MCP, no CLI, no I/O beyond reading.
     __init__.py          analyze_intelligence() orchestrates all of the above;
                          must run after identify_project() (reads Project.
                          frameworks / .environment_files).
+  caching/         Phase 6: incremental re-analysis. A subpackage of the
+                    engine, not beside it (D-044) — free to call
+                    analyzer.intelligence internals directly.
+    hashing.py           FileFingerprint (size, mtime, SHA-256); size+mtime
+                         fast path before ever hashing content (D-047).
+    change_detection.py  Classifies files new/modified/deleted/unchanged;
+                         exact-content-hash rename matching only (D-048).
+    reanalysis.py         Reuses cached per-file categories (entry points,
+                         modules, routes, database models); always fully
+                         recomputes cross-file ones once anything changed
+                         (D-046). Selective re-parsing is the `only=`
+                         parameter added to five Phase 3 functions (D-045).
+    cache_io.py            load/save/clear .ai-context/.cache/cache.json.
+                         CacheStatus always fails closed — MISSING, VALID,
+                         CORRUPTED, VERSION_MISMATCH, TOOL_VERSION_MISMATCH,
+                         CLEARED (D-050). Structured metadata only, never
+                         rendered Markdown (D-049).
+    __init__.py            reanalyze(project, cache_file, force=False) —
+                         the one public entry point.
 generator/         Phase 4: Project -> AI Knowledge Base. Top-level package,
                    NOT nested under analyzer/ (D-028) — a consumer of the
                    engine's output, same architectural role as cli.py.
@@ -113,15 +150,34 @@ generator/         Phase 4: Project -> AI Knowledge Base. Top-level package,
                        every file's "## Related Context" footer (D-030).
   writer.py             The only module that touches disk. Forces LF line
                        endings so output is byte-identical cross-platform.
+                       write_documents_if_changed() (Phase 6) writes only
+                       documents whose rendered content differs from what's
+                       already on disk (D-052) — used by incremental/.
   renderers/            One module per generated file, each exposing
                        render(project) -> Document (ai_context.py and
                        index.py additionally take the full document list).
   __init__.py            generate_knowledge_base() (pure) and
                        write_knowledge_base() (writes to disk) orchestrate
                        all twelve renderers.
-mcp_server/        Phase 5: expose analyzer/ + generator/ over MCP. Top-level
-                   package (D-041), same reasoning as generator/ (D-028).
-                   An adapter: almost no logic of its own.
+incremental/       Phase 6: orchestrates analyzer.caching + generator for
+                   incremental updates. Top-level package (D-051), same
+                   reasoning as generator/ (D-028) and mcp_server/ (D-041)
+                   — a consumer spanning both, neither of which may depend
+                   on the other directly.
+  models.py            CacheInfo, ChangePreview, ChangeReport — this
+                       layer's own response types, not discovered facts.
+  dependencies.py       DOCUMENT_FIELDS: static document -> Project-field
+                       map, used only for ChangeReport reporting, never to
+                       gate what gets rendered or written (D-052).
+  serialization.py       change_set_dict / change_report_dict / etc. —
+                       shared by cli.py's --json output and mcp_server's
+                       tool responses (D-034's discipline, extended).
+  __init__.py            update_knowledge_base(), preview_changes()
+                       (read-only), inspect_cache(), clear_cache().
+mcp_server/        Phase 5: expose analyzer/ + generator/ + incremental/
+                   over MCP. Top-level package (D-041), same reasoning as
+                   generator/ (D-028). An adapter: almost no logic of its
+                   own.
   models.py            ErrorType (enum), ToolError — this layer's own
                        response types, not discovered facts.
   errors.py             classify_exception(): maps a caught exception to a
@@ -130,51 +186,71 @@ mcp_server/        Phase 5: expose analyzer/ + generator/ over MCP. Top-level
   utils.py              build_repository_summary() (shared by two tools —
                        D-036), build_health_status(). No MCP SDK import.
   handlers.py            Pure business logic: calls analyzer.analyze_
-                       repository() / generator.generate_knowledge_base().
+                       repository() / generator.generate_knowledge_base() /
+                       incremental's update_knowledge_base() etc.
                        No MCP SDK import — testable directly.
   tools.py               The only module that imports the MCP SDK
-                       (mcp.server.fastmcp.FastMCP). 4 tools:
+                       (mcp.server.fastmcp.FastMCP). 6 tools:
                        analyze_repository, repository_summary,
-                       generate_knowledge_base, health_check. Every tool
-                       catches its own exceptions (D-035).
+                       generate_knowledge_base (incremental/force params,
+                       D-051), health_check, repository_changes,
+                       clear_cache. Every tool catches its own exceptions
+                       (D-035).
   server.py              Stdio run loop + logging setup (stderr only,
                        D-038).
-cli.py             Thin CLI over the engine + generator. `scan` inspects;
-                   `generate` writes the Knowledge Base. Not the product.
+cli.py             Thin CLI over the engine + generator + incremental.
+                   `scan` inspects; `generate` writes the Knowledge Base
+                   (always full); `update`/`cache-info`/`cache-clear`
+                   (Phase 6) are incremental. Not the product.
 server.py          MCP entry point — thin shim over mcp_server/ (D-043),
                    same relationship cli.py has to analyzer/generator.
-tests/             pytest, no fixtures beyond tmp_path.
+tests/             pytest, mostly tmp_path; a couple of Phase 5/6 custom
+                   fixtures (e.g. incremental_repo in test_mcp_server.py)
+                   where repeated multi-file setup earned one.
 sample_repo/       Small fake repo for eyeballing CLI output.
 docs/              Architecture, roadmap, decisions, standards, MCP_SERVER.md.
 ```
 
 ## Current state
 
-**Phases 1 through 5 are complete — first production-ready release.** The
-engine scans a repository (Phase 1), identifies what it is — languages,
-frameworks, package managers, build tools, CI/CD, containerization,
-environment surfaces, overall repository type (Phase 2) — and understands
-its internal Python structure: entry points, import graph, module metadata,
-routes, database models, authentication, configuration, module
-dependencies, evidence-ranked important files (Phase 3).
-`analyzer.analyze_repository()` is the one-call composition of all three;
-`Project` is the contract Phase 4 and Phase 5 both consume.
+**Phases 1 through 6 are complete.** The engine scans a repository
+(Phase 1), identifies what it is — languages, frameworks, package
+managers, build tools, CI/CD, containerization, environment surfaces,
+overall repository type (Phase 2) — and understands its internal Python
+structure: entry points, import graph, module metadata, routes, database
+models, authentication, configuration, module dependencies, evidence-
+ranked important files (Phase 3). `analyzer.analyze_repository()` is the
+one-call composition of all three; `Project` is the contract every later
+phase consumes.
 
 The generator (Phase 4) turns that `Project` into the `.ai-context/`
 Knowledge Base — twelve cross-referenced Markdown files, this project's
-primary output. `python cli.py generate <path>` writes it;
-`generator.generate_knowledge_base(project)` returns it as
+primary output. `python cli.py generate <path>` writes it (always a full
+regeneration); `generator.generate_knowledge_base(project)` returns it as
 `{filename: markdown}` without touching disk.
 
 The MCP server (Phase 5, `mcp_server/`) exposes both over the Model Context
-Protocol as four tools (`analyze_repository`, `repository_summary`,
-`generate_knowledge_base`, `health_check`), stdio transport, using the
-official MCP Python SDK. `python server.py` or the installed
-`save-your-tokens-mcp` console script runs it. It produces byte-identical
-Knowledge Bases to the CLI, since both call the same underlying functions.
+Protocol as six tools (`analyze_repository`, `repository_summary`,
+`generate_knowledge_base`, `health_check`, `repository_changes`,
+`clear_cache`), stdio transport, using the official MCP Python SDK.
+`python server.py` or the installed `save-your-tokens-mcp` console script
+runs it. It produces byte-identical Knowledge Bases to the CLI, since both
+call the same underlying functions.
 
-No further phases are currently planned; see `docs/ROADMAP.md` for possible
-future work (Phase 6: caching, incremental rescans).
+The Incremental Intelligence layer (Phase 6, `analyzer/caching/` +
+`incremental/`) makes repeated analysis cheap without changing what it
+produces: a persistent cache at `.ai-context/.cache/cache.json` tracks
+per-file fingerprints and Phase 3 category data; `python cli.py update
+<path>` (or `generate_knowledge_base(incremental=True)` over MCP) detects
+what changed, reuses everything else wherever that's provably safe, and
+rewrites only the Knowledge Base documents whose content actually
+changed. Any cache problem (missing, corrupted, wrong schema/tool
+version) falls back to a full analysis automatically — an incremental run
+and a full run against the same repository state are guaranteed to
+produce byte-identical output.
+
+No further phases are currently planned; see `docs/ROADMAP.md` for
+possible future work.
 
 ## Conventions
 
@@ -233,11 +309,14 @@ Full detail in `docs/CODING_STANDARDS.md`.
 ```bash
 python cli.py scan .              # human summary
 python cli.py scan . --json       # machine-readable
-python cli.py generate .          # write .ai-context/ Knowledge Base
+python cli.py generate .          # write .ai-context/ Knowledge Base (always full)
+python cli.py update .            # incremental regeneration (--force for full)
+python cli.py cache-info .        # inspect the incremental cache
+python cli.py cache-clear .       # delete the incremental cache
 python server.py                  # run the MCP server over stdio
 python -m pytest -q               # test suite
 ruff check .                      # lint
-mypy analyzer/ generator/ mcp_server/ cli.py server.py --ignore-missing-imports
+mypy analyzer/ generator/ mcp_server/ incremental/ cli.py server.py --ignore-missing-imports
 ```
 
 ## Before you finish a change

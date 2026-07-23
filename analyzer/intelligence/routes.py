@@ -27,8 +27,13 @@ _SHORTCUT_HTTP_METHODS = frozenset(
 _DJANGO_PATH_FUNCS = frozenset({"path", "re_path", "url"})
 
 
-def detect_routes(project: Project) -> tuple[Route, ...]:
-    parsed_modules = parse_python_files(project)
+def detect_routes(
+    project: Project, *, only: frozenset[str] | None = None
+) -> tuple[Route, ...]:
+    """Detect routes. ``only`` restricts AST parsing to those files (Phase 6
+    incremental re-analysis, D-044); omit it for the full project.
+    """
+    parsed_modules = parse_python_files(project, only=only)
     framework = _web_framework(project)
     routes: list[Route] = []
 

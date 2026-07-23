@@ -15,6 +15,8 @@ _EXPECTED_TOOL_NAMES = {
     "analyze_repository",
     "repository_summary",
     "generate_knowledge_base",
+    "repository_changes",
+    "clear_cache",
     "health_check",
 }
 
@@ -32,6 +34,24 @@ _EXPECTED_KB_FILES = {
     "AI_CONTEXT.md",
     "INDEX.md",
 }
+
+
+@pytest.fixture
+def incremental_repo(tmp_path):
+    """A small, writable Flask app — for tests that mutate a repo across
+    multiple incremental calls (``sample_repo/`` is a static shared fixture
+    other tests also depend on, so it can't be mutated).
+    """
+    repo = tmp_path / "incremental_repo"
+    repo.mkdir()
+    (repo / "app.py").write_text(
+        "from flask import Flask\n"
+        "app = Flask(__name__)\n\n"
+        "@app.route('/health')\n"
+        "def health():\n    return 'ok'\n",
+        encoding="utf-8",
+    )
+    return repo
 
 
 # --- handlers: pure business logic, no MCP SDK involved
@@ -126,6 +146,65 @@ def test_handle_generate_knowledge_base_analyzes_once_not_twice(tmp_path, monkey
         "sample_repo", output_dir=str(tmp_path / "out")
     )
     assert len(calls) == 1
+
+
+def test_handle_generate_knowledge_base_default_matches_original_full_behaviour(
+    tmp_path,
+):
+    """incremental defaults to False — Phase 5 callers see no change."""
+    result = handlers.handle_generate_knowledge_base(
+        "sample_repo", output_dir=str(tmp_path / "out")
+    )
+    assert result["written"] is True
+    assert set(result["files"]) == _EXPECTED_KB_FILES
+    assert "cache_status" not in result  # the incremental-only shape
+
+
+def test_handle_generate_knowledge_base_incremental_true(tmp_path, incremental_repo):
+    result = handlers.handle_generate_knowledge_base(
+        str(incremental_repo), output_dir=str(tmp_path / "out"), incremental=True
+    )
+    assert result["cache_status"] == "missing"
+    assert set(result["documents_regenerated"]) == _EXPECTED_KB_FILES
+    assert result["forced_full_analysis"] is True
+
+
+def test_handle_generate_knowledge_base_incremental_second_call_is_selective(
+    tmp_path, incremental_repo
+):
+    output_dir = str(tmp_path / "out")
+    handlers.handle_generate_knowledge_base(
+        str(incremental_repo), output_dir=output_dir, incremental=True
+    )
+    result = handlers.handle_generate_knowledge_base(
+        str(incremental_repo), output_dir=output_dir, incremental=True
+    )
+    assert result["documents_regenerated"] == []
+    assert set(result["documents_unchanged"]) == _EXPECTED_KB_FILES
+    assert result["forced_full_analysis"] is False
+
+
+def test_handle_repository_changes_is_read_only(tmp_path, incremental_repo):
+    result = handlers.handle_repository_changes(
+        str(incremental_repo), output_dir=str(tmp_path / "out")
+    )
+    assert result["cache_status"] == "missing"
+    assert len(result["change_set"]["new_files"]) > 0
+    assert not (tmp_path / "out").exists()
+
+
+def test_handle_clear_cache(tmp_path, incremental_repo):
+    output_dir = str(tmp_path / "out")
+    handlers.handle_generate_knowledge_base(
+        str(incremental_repo), output_dir=output_dir, incremental=True
+    )
+    result = handlers.handle_clear_cache(str(incremental_repo), output_dir=output_dir)
+    assert result["cleared"] is True
+
+    result_again = handlers.handle_clear_cache(
+        str(incremental_repo), output_dir=output_dir
+    )
+    assert result_again["cleared"] is False
 
 
 def test_handle_health_check_shape():
@@ -255,6 +334,83 @@ async def test_generate_knowledge_base_tool_call(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_generate_knowledge_base_tool_call_incremental(
+    tmp_path, incremental_repo
+):
+    from mcp_server.tools import mcp
+
+    output_dir = tmp_path / "kb"
+    _, first = await mcp.call_tool(
+        "generate_knowledge_base",
+        {
+            "path": str(incremental_repo),
+            "output_dir": str(output_dir),
+            "incremental": True,
+        },
+    )
+    assert first["success"] is True
+    assert set(first["documents_regenerated"]) == _EXPECTED_KB_FILES
+
+    _, second = await mcp.call_tool(
+        "generate_knowledge_base",
+        {
+            "path": str(incremental_repo),
+            "output_dir": str(output_dir),
+            "incremental": True,
+        },
+    )
+    assert second["documents_regenerated"] == []
+    assert set(second["documents_unchanged"]) == _EXPECTED_KB_FILES
+
+
+@pytest.mark.anyio
+async def test_repository_changes_tool_call(tmp_path, incremental_repo):
+    from mcp_server.tools import mcp
+
+    output_dir = tmp_path / "kb"
+    _, data = await mcp.call_tool(
+        "repository_changes",
+        {"path": str(incremental_repo), "output_dir": str(output_dir)},
+    )
+    assert data["success"] is True
+    assert data["cache_status"] == "missing"
+    assert len(data["change_set"]["new_files"]) == 1
+    assert not output_dir.exists()  # read-only: nothing written
+
+
+@pytest.mark.anyio
+async def test_clear_cache_tool_call(tmp_path, incremental_repo):
+    from mcp_server.tools import mcp
+
+    output_dir = tmp_path / "kb"
+    await mcp.call_tool(
+        "generate_knowledge_base",
+        {
+            "path": str(incremental_repo),
+            "output_dir": str(output_dir),
+            "incremental": True,
+        },
+    )
+    _, data = await mcp.call_tool(
+        "clear_cache", {"path": str(incremental_repo), "output_dir": str(output_dir)}
+    )
+    assert data["success"] is True
+    assert data["cleared"] is True
+
+
+@pytest.mark.anyio
+async def test_clear_cache_tool_call_nonexistent_path_never_raises():
+    """clear_cache only ever checks for a cache *file*; a repository path
+    that doesn't exist just means there's nothing to clear — not an error.
+    """
+    from mcp_server.tools import mcp
+
+    _, data = await mcp.call_tool("clear_cache", {"path": "missing_xyz"})
+    assert data["success"] is True
+    assert data["cleared"] is False
+
+
+@pytest.mark.anyio
 async def test_multiple_sequential_tool_calls_are_independent():
     """Repeated calls against the same repository return consistent results —
     no shared mutable state leaking between requests.
@@ -291,6 +447,23 @@ def test_mcp_generated_knowledge_base_matches_cli_generated_knowledge_base(tmp_p
     handlers.handle_generate_knowledge_base("sample_repo", output_dir=str(mcp_output))
     project = analyze_repository("sample_repo")
     write_knowledge_base(project, cli_output)
+
+    for filename in _EXPECTED_KB_FILES:
+        assert (mcp_output / filename).read_bytes() == (
+            cli_output / filename
+        ).read_bytes()
+
+
+def test_mcp_incremental_output_matches_cli_update_output(incremental_repo, tmp_path):
+    from incremental import update_knowledge_base as cli_update_knowledge_base
+
+    mcp_output = tmp_path / "via_mcp"
+    cli_output = tmp_path / "via_cli"
+
+    handlers.handle_generate_knowledge_base(
+        str(incremental_repo), output_dir=str(mcp_output), incremental=True
+    )
+    cli_update_knowledge_base(incremental_repo, output_dir=cli_output)
 
     for filename in _EXPECTED_KB_FILES:
         assert (mcp_output / filename).read_bytes() == (

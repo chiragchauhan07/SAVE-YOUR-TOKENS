@@ -2,14 +2,22 @@
 
 Extracted from ``cli.py``'s original private helpers so the CLI and the MCP
 server (Phase 5) share one conversion implementation instead of two — see
-D-034. Every function here is a pure, allocation-only mapping from a frozen
-dataclass to plain dicts/lists/strings; none of it reads a file, analyses
-anything, or has side effects.
+D-034. Every ``*_dict`` function here is a pure, allocation-only mapping
+from a frozen dataclass to plain dicts/lists/strings; none of it reads a
+file, analyses anything, or has side effects.
+
+Phase 6 added the symmetric ``*_from_dict`` functions — round-tripping a
+``Project``'s parts through JSON is exactly what the incremental cache
+needs (D-044), and keeping both directions in one module means there is
+one place, not two, that knows a ``Route``'s JSON shape.
 """
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
 from analyzer.models import (
+    Confidence,
     DatabaseModel,
     Detection,
     EntryPoint,
@@ -31,6 +39,14 @@ def detection_dict(detection: Detection) -> dict:
     }
 
 
+def detection_from_dict(data: dict) -> Detection:
+    return Detection(
+        name=data["name"],
+        confidence=Confidence[data["confidence"]],
+        evidence=tuple(data["evidence"]),
+    )
+
+
 def language_dict(language: LanguageStat) -> dict:
     return {
         "name": language.name,
@@ -38,6 +54,15 @@ def language_dict(language: LanguageStat) -> dict:
         "size_bytes": language.size_bytes,
         "percentage": language.percentage,
     }
+
+
+def language_from_dict(data: dict) -> LanguageStat:
+    return LanguageStat(
+        name=data["name"],
+        file_count=data["file_count"],
+        size_bytes=data["size_bytes"],
+        percentage=data["percentage"],
+    )
 
 
 def entry_point_dict(entry_point: EntryPoint) -> dict:
@@ -50,6 +75,16 @@ def entry_point_dict(entry_point: EntryPoint) -> dict:
     }
 
 
+def entry_point_from_dict(data: dict) -> EntryPoint:
+    return EntryPoint(
+        file=PurePosixPath(data["file"]),
+        kind=data["kind"],
+        symbol=data["symbol"],
+        confidence=Confidence[data["confidence"]],
+        evidence=tuple(data["evidence"]),
+    )
+
+
 def route_dict(route: Route) -> dict:
     return {
         "method": route.method,
@@ -58,6 +93,16 @@ def route_dict(route: Route) -> dict:
         "file": str(route.file),
         "framework": route.framework,
     }
+
+
+def route_from_dict(data: dict) -> Route:
+    return Route(
+        method=data["method"],
+        path=data["path"],
+        handler=data["handler"],
+        file=PurePosixPath(data["file"]),
+        framework=data["framework"],
+    )
 
 
 def database_model_dict(model: DatabaseModel) -> dict:
@@ -71,6 +116,17 @@ def database_model_dict(model: DatabaseModel) -> dict:
     }
 
 
+def database_model_from_dict(data: dict) -> DatabaseModel:
+    return DatabaseModel(
+        name=data["name"],
+        orm=data["orm"],
+        table_name=data["table_name"],
+        file=PurePosixPath(data["file"]),
+        fields=tuple(data["fields"]),
+        evidence=tuple(data["evidence"]),
+    )
+
+
 def module_dict(module: ModuleInfo) -> dict:
     return {
         "file": str(module.file),
@@ -82,6 +138,17 @@ def module_dict(module: ModuleInfo) -> dict:
     }
 
 
+def module_from_dict(data: dict) -> ModuleInfo:
+    return ModuleInfo(
+        file=PurePosixPath(data["file"]),
+        classes=tuple(data["classes"]),
+        functions=tuple(data["functions"]),
+        async_functions=tuple(data["async_functions"]),
+        constants=tuple(data["constants"]),
+        exports=tuple(data["exports"]),
+    )
+
+
 def import_edge_dict(edge: ImportEdge) -> dict:
     return {
         "file": str(edge.file),
@@ -91,8 +158,24 @@ def import_edge_dict(edge: ImportEdge) -> dict:
     }
 
 
+def import_edge_from_dict(data: dict) -> ImportEdge:
+    resolved = data["resolved_file"]
+    return ImportEdge(
+        file=PurePosixPath(data["file"]),
+        module=data["module"],
+        is_internal=data["is_internal"],
+        resolved_file=PurePosixPath(resolved) if resolved else None,
+    )
+
+
 def module_dependency_dict(dependency: ModuleDependency) -> dict:
     return {"source": str(dependency.source), "target": str(dependency.target)}
+
+
+def module_dependency_from_dict(data: dict) -> ModuleDependency:
+    return ModuleDependency(
+        source=PurePosixPath(data["source"]), target=PurePosixPath(data["target"])
+    )
 
 
 def important_file_dict(important_file: ImportantFile) -> dict:
@@ -101,6 +184,14 @@ def important_file_dict(important_file: ImportantFile) -> dict:
         "score": important_file.score,
         "reasons": list(important_file.reasons),
     }
+
+
+def important_file_from_dict(data: dict) -> ImportantFile:
+    return ImportantFile(
+        file=PurePosixPath(data["file"]),
+        score=data["score"],
+        reasons=tuple(data["reasons"]),
+    )
 
 
 def project_to_dict(project: Project) -> dict:

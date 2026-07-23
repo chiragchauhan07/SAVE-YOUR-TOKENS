@@ -6,10 +6,11 @@ any MCP-compatible AI coding assistant can call it directly instead of
 shelling out to the CLI.
 
 The MCP layer is a thin adapter (`mcp_server/`) over the same engine the CLI
-uses (`analyzer/`, `generator/`). It contains no analysis logic of its own —
-see [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the layering, and
-[docs/DECISIONS.md](DECISIONS.md) (D-034 through D-043) for the reasoning
-behind specific choices below.
+uses (`analyzer/`, `generator/`, and — for the incremental tools —
+`incremental/`). It contains no analysis logic of its own — see
+[docs/ARCHITECTURE.md](ARCHITECTURE.md) for the layering, and
+[docs/DECISIONS.md](DECISIONS.md) (D-034 through D-043, D-051) for the
+reasoning behind specific choices below.
 
 ## Installation
 
@@ -97,7 +98,7 @@ messages with it.
 
 ## Tools
 
-Four tools, covering the full engine surface without a sprawling API.
+Six tools, covering the full engine surface without a sprawling API.
 Every tool response is a JSON object; error responses always have the
 shape `{"success": false, "error": {"type": "...", "message": "..."}}` —
 see [Error handling](#error-handling) below.
@@ -111,8 +112,8 @@ useful for confirming an installation is wired up correctly.
 {
   "success": true,
   "status": "ok",
-  "package_version": "0.4.0",
-  "server_version": "0.4.0",
+  "package_version": "0.6.0",
+  "server_version": "0.6.0",
   "mcp_sdk_version": "1.28.1",
   "python_version": "3.12.4",
   "platform": "Windows-11-10.0.26200-SP0"
@@ -191,6 +192,8 @@ the protocol on every call would be unnecessary work.
 | `path` | string | required | Repository to analyse |
 | `output_dir` | string \| null | `<path>/.ai-context` | Where to write |
 | `overwrite` | boolean | `true` | Overwrite an existing, non-empty output directory |
+| `incremental` | boolean | `false` | Reuse the cache where safe, write only changed documents |
+| `force` | boolean | `false` | With `incremental=True`, ignore the cache and re-analyse fully anyway (still byte-identical to a full regeneration) |
 
 ```json
 {
@@ -214,6 +217,71 @@ With `overwrite: false` against a directory that already has content:
   "output_directory": "/abs/path/.ai-context"
 }
 ```
+
+With `incremental: true`, the response is a `ChangeReport` instead
+(`overwrite` is ignored — incremental mode always writes exactly the
+documents that changed):
+
+```json
+{
+  "success": true,
+  "cache_status": "valid",
+  "change_set": {"new": [], "modified": ["app.py"], "deleted": [], "renamed": [], "unchanged_count": 74},
+  "files_analyzed": 1,
+  "files_reused": 74,
+  "documents_regenerated": ["API_ROUTES.md", "AI_CONTEXT.md"],
+  "documents_unchanged": ["OVERVIEW.md", "DATABASE.md", "..."],
+  "new_routes": ["GET /new"],
+  "removed_routes": [],
+  "new_models": [],
+  "removed_models": [],
+  "changed_categories": ["routes"],
+  "forced_full_analysis": false,
+  "duration_seconds": 0.39
+}
+```
+
+`incremental=False` (the default) is the original Phase 5 behaviour,
+unchanged — existing callers see no difference.
+
+### `repository_changes`
+
+Preview what an incremental update would do, **without doing it** — no
+cache write, no Knowledge Base write. Useful for an agent deciding whether
+an update is worth running at all.
+
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `path` | string | required | Repository to inspect |
+| `output_dir` | string \| null | `<path>/.ai-context` | Where the cache would live |
+
+```json
+{
+  "success": true,
+  "cache_status": "valid",
+  "change_set": {"new": ["new_module.py"], "modified": [], "deleted": [], "renamed": [], "unchanged_count": 75}
+}
+```
+
+### `clear_cache`
+
+Delete the incremental cache, forcing the next `generate_knowledge_base`
+(or CLI `update`) call to start fresh with a full analysis. Does not touch
+the Knowledge Base itself.
+
+| Argument | Type | Default | Meaning |
+|---|---|---|---|
+| `path` | string | required | Repository whose cache to clear |
+| `output_dir` | string \| null | `<path>/.ai-context` | Where the cache lives |
+
+```json
+{
+  "success": true,
+  "cleared": true
+}
+```
+
+`cleared: false` means there was no cache file to delete — never an error.
 
 ## Error handling
 
@@ -247,7 +315,10 @@ byte-compares the two).
 ```bash
 python cli.py scan /path/to/repo              # human-readable summary
 python cli.py scan /path/to/repo --json        # full structured data
-python cli.py generate /path/to/repo           # write .ai-context/
+python cli.py generate /path/to/repo           # write .ai-context/ (always full)
+python cli.py update /path/to/repo             # incremental — same engine as generate_knowledge_base(incremental=true)
+python cli.py cache-info /path/to/repo         # inspect the cache
+python cli.py cache-clear /path/to/repo        # delete the cache
 ```
 
 See the root [README.md](../README.md) for the full CLI reference.
@@ -273,8 +344,13 @@ and dependency rules. In short:
 
 ```
 Repository → Scanner → Identification → Intelligence → Generator → MCP Integration Layer → AI Assistant
+                              ↑
+                    analyzer/caching/ (incremental path)
+                              ↓
+                        incremental/ (orchestration)
 ```
 
 `mcp_server/` never re-scans, re-parses, or duplicates analysis logic — it
-calls `analyzer.analyze_repository()` and `generator.generate_knowledge_base()`
-directly and shapes their results into MCP tool responses.
+calls `analyzer.analyze_repository()`, `generator.generate_knowledge_base()`
+and `incremental`'s entry points directly and shapes their results into
+MCP tool responses.

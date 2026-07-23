@@ -7,8 +7,95 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-No active development. Phase 5 completed the first production-ready
-release; see [docs/ROADMAP.md](docs/ROADMAP.md) for possible future work.
+No active development. Phase 6 completed the Incremental Intelligence
+Engine; see [docs/ROADMAP.md](docs/ROADMAP.md) for possible future work.
+
+## [0.6.0] — 2026-07-23
+
+Phase 6: the Incremental Intelligence Engine. Repeated analysis of an
+unchanged (or mostly unchanged) repository now reuses prior work instead of
+recomputing everything, while guaranteeing the same output a full
+regeneration would produce — correctness is never traded for speed.
+
+### Added
+
+- `analyzer/caching/` — a new subpackage of the engine (not a new top-level
+  package: it *is* analysis, just incremental analysis — D-044). Owns the
+  persistent cache at `.ai-context/.cache/cache.json`: per-file fingerprints
+  (size, mtime, SHA-256 content hash) and every Phase 3 category, never
+  generated Markdown (D-049).
+  - `hashing.py` — a size+mtime fast path before ever hashing file content;
+    a full SHA-256 only when either has changed (D-047).
+  - `change_detection.py` — classifies every file as new/modified/
+    deleted/unchanged against the cache, then matches new+deleted pairs
+    with an identical content hash as renames (D-048) — exact-hash only,
+    no fuzzy or similarity-based matching.
+  - `reanalysis.py` — reuses cached results for the four *per-file* Phase 3
+    categories (entry points, modules, routes, database models — no
+    cross-file dependency) and always fully recomputes the *cross-file*
+    ones (imports, circular imports, module dependencies, authentication,
+    configuration, important files) the moment anything changed (D-046).
+    This is the engine's own escape hatch for the spec's "never sacrifice
+    correctness" requirement — categories that can't be proven safe to
+    reuse simply aren't reused.
+  - `cache_io.py` — load/save/clear, and a `CacheStatus` that's always one
+    of `MISSING`, `VALID`, `CORRUPTED`, `VERSION_MISMATCH`,
+    `TOOL_VERSION_MISMATCH`, `CLEARED` — corrupted JSON, a schema-version
+    bump, or a tool upgrade all fall back to a full analysis automatically,
+    never to a guess (D-050 covers the schema/tool version fields).
+- `incremental/` — a new top-level package (same architectural role as
+  `mcp_server/`: an orchestrator over the engine and generator, importing
+  only their public APIs — D-051) exposing four entry points:
+  `update_knowledge_base()`, `preview_changes()` (read-only — no cache or
+  Knowledge Base write), `inspect_cache()`, `clear_cache()`.
+- Selective generation: every document is still rendered on every run, but
+  only written to disk if its content actually differs from what's already
+  there (`generator/writer.py::write_documents_if_changed`). Chosen over
+  trusting a static per-document dependency map, because a direct test
+  proved the static map alone would have produced a stale result in a real
+  scenario — content comparison is correct by construction, the map is
+  reporting-only (D-052).
+- A structured `ChangeReport`: files analysed vs. reused, documents
+  regenerated vs. left unchanged, new/removed routes and models, which
+  Phase 3 categories changed, whether a full analysis was forced, and
+  elapsed time.
+- CLI: `update` (incremental regeneration, `--force` for a full one),
+  `cache-info` (inspect cache validity and tracked file count),
+  `cache-clear` (delete the cache) — all with `--json` output; `scan` and
+  `generate` are unchanged and remain fully backwards compatible.
+- MCP: `generate_knowledge_base` gained `incremental`/`force` parameters
+  (default `incremental=False`, so existing callers see no behaviour
+  change); two new tools, `repository_changes` (preview, read-only) and
+  `clear_cache`. Both reuse `incremental/` directly — no duplicated cache
+  or diffing logic in the MCP layer (same discipline as D-041).
+- 51 new tests: every cache-validity scenario (missing, valid, corrupted,
+  version mismatch, tool-version mismatch, cleared), every change kind
+  (new/modified/deleted/renamed/untouched-but-touched-mtime files, single
+  and multiple files), selective generation correctness, forced-vs-
+  incremental byte-identical output, change-report content, cache
+  inspection/clearing, and the same CLI/MCP parity discipline established
+  in Phase 5.
+
+### Notes
+
+- Determinism holds across the new axis too: an incremental run and a
+  forced full run against the same repository state produce byte-identical
+  Knowledge Bases — verified directly
+  (`tests/test_incremental.py::test_force_matches_incremental_result`) and
+  again by dogfooding against this repository itself.
+- Dogfooded against this repository: a single-file change regenerated only
+  the documents that could plausibly have been affected by it; a
+  multi-file change across unrelated modules regenerated exactly the
+  union of what each file's change affected; a forced full regeneration
+  afterward wrote zero bytes (all twelve documents already matched byte
+  for byte); a corrupted cache file and a bumped cache-version both fell
+  back to a full analysis automatically and self-healed the cache on the
+  way out.
+- `pyproject.toml`'s `packages.find` include list gained `incremental*` —
+  applying the D-025/D-033 lesson before the first wheel build for this
+  phase, not after; confirmed by an actual wheel build listing both
+  `analyzer.caching` and `incremental` before this phase was considered
+  done.
 
 ## [0.5.0] — 2026-07-23
 

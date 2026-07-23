@@ -13,8 +13,13 @@ from analyzer.intelligence.common import ParsedModule, parse_python_files
 from analyzer.models import ModuleInfo, Project
 
 
-def analyze_modules(project: Project) -> tuple[ModuleInfo, ...]:
-    parsed_modules = parse_python_files(project)
+def analyze_modules(
+    project: Project, *, only: frozenset[str] | None = None
+) -> tuple[ModuleInfo, ...]:
+    """Analyse modules. ``only`` restricts AST parsing to those files
+    (Phase 6 incremental re-analysis, D-044); omit it for the full project.
+    """
+    parsed_modules = parse_python_files(project, only=only)
     return tuple(
         sorted(
             (_analyze_module(parsed) for parsed in parsed_modules),

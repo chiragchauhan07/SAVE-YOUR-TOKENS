@@ -5,9 +5,9 @@
 Turn a software repository into a compact, structured briefing that an AI
 coding agent can read in seconds instead of rediscovering by search.
 
-> **Status: first production-ready release (Phase 5 complete).** The
-> repository scanner, identification detectors, Python code intelligence,
-> the `.ai-context/` Knowledge Base generator, and the MCP server are all
+> **Status: Phase 6 complete.** The repository scanner, identification
+> detectors, Python code intelligence, the `.ai-context/` Knowledge Base
+> generator, the MCP server, and an incremental re-analysis engine are all
 > implemented and tested. See the [Roadmap](#roadmap) and
 > [docs/MCP_SERVER.md](docs/MCP_SERVER.md) for MCP installation and
 > client configuration.
@@ -71,7 +71,7 @@ the core.
 
 ## Features
 
-**Available now (Phase 1 through 5)**
+**Available now (Phase 1 through 6)**
 
 - Recursive repository scanning with directory pruning
 - Deterministic, sorted, reproducible output
@@ -95,12 +95,20 @@ the core.
 - AI-native Knowledge Base generation: twelve deterministic, cross-referenced
   Markdown files in `.ai-context/`, every file always present with graceful
   "none detected" content, never a copy of source code
-- An MCP server (four tools: `analyze_repository`, `repository_summary`,
-  `generate_knowledge_base`, `health_check`) exposing the same engine over
-  the Model Context Protocol — byte-identical output to the CLI, safe
-  structured error handling, stdio transport
+- An MCP server (six tools: `analyze_repository`, `repository_summary`,
+  `generate_knowledge_base`, `health_check`, `repository_changes`,
+  `clear_cache`) exposing the same engine over the Model Context Protocol —
+  byte-identical output to the CLI, safe structured error handling, stdio
+  transport
+- Incremental re-analysis: a persistent cache detects new/modified/
+  deleted/renamed files, reuses prior analysis wherever it's provably safe
+  to, and regenerates only the Knowledge Base documents that actually
+  changed — always falls back to a full analysis if the cache is missing,
+  corrupted, or from a different tool version, and always produces
+  byte-identical output to a full regeneration
 - Typed `Project` model as the engine's public contract
-- CLI with human and JSON output, plus `generate` for the Knowledge Base
+- CLI with human and JSON output, plus `generate` for a full Knowledge
+  Base build and `update`/`cache-info`/`cache-clear` for incremental use
 
 ## Installation
 
@@ -230,6 +238,42 @@ Generated 12 files in /path/to/repository/.ai-context
 
 `--output DIR` writes elsewhere instead of `<path>/.ai-context`.
 
+Incremental regeneration — reuses the cache from a prior `update` (or
+`generate`), re-analysing and rewriting only what actually changed:
+
+```bash
+python cli.py update /path/to/repository
+```
+
+```
+Cache: valid
+  new: 0
+  modified: 1
+  deleted: 0
+  renamed: 0
+  unchanged: 74
+
+Files analyzed: 1
+Files reused  : 74
+
+Knowledge regenerated:
+  API_ROUTES.md
+  AI_CONTEXT.md
+
+Knowledge unchanged: 10 document(s)
+
+Duration: 0.39s
+```
+
+`--force` ignores the cache and re-analyses fully (still writes
+byte-identical output to a plain incremental run against the same state).
+`cache-info` and `cache-clear` inspect and delete the cache:
+
+```bash
+python cli.py cache-info /path/to/repository
+python cli.py cache-clear /path/to/repository
+```
+
 Or use the engine and generator directly:
 
 ```python
@@ -258,8 +302,8 @@ project = analyze_intelligence(project)  # entry points, routes, models, ...
 
 ## MCP server
 
-Four tools over the Model Context Protocol — same engine, same results as
-the CLI:
+Six tools over the Model Context Protocol — same engine, same results as
+the CLI, including incremental updates:
 
 ```bash
 python server.py                # run over stdio
@@ -289,10 +333,13 @@ Repository
     ↓
 Analysis Engine          ← analyzer/     (deterministic, no MCP, no LLM)
                             scanner → detectors → intelligence
+                            analyzer/caching/ — incremental re-analysis
     ↓
 Knowledge Base Generator ← generator/    (Project → .ai-context/, the primary output)
     ↓
-MCP Integration Layer    ← mcp_server/   (thin adapter, 4 tools)
+Incremental Orchestrator ← incremental/  (update/preview/inspect/clear the cache)
+    ↓
+MCP Integration Layer    ← mcp_server/   (thin adapter, 6 tools)
     ↓
 server.py, cli.py        (entry points)
     ↓
@@ -317,7 +364,7 @@ Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | 3 | Code Intelligence Engine                  | Done |
 | 4 | AI Knowledge Base Generator                | Done |
 | 5 | MCP Integration Layer                     | Done |
-| 6 | Caching, incremental rescans, packaging   | Possible future work |
+| 6 | Incremental Intelligence Engine            | Done |
 
 Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
 

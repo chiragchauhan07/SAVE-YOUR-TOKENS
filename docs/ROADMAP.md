@@ -225,13 +225,68 @@ first attempt.
 
 ---
 
-## Phase 6 — Performance & Distribution
+## Phase 6 — Incremental Intelligence Engine ✅
 
-- [ ] Cache results keyed by repository state
-- [ ] Incremental rescan of changed paths only
-- [ ] Honour `.gitignore` in addition to built-in rules
-- [ ] Benchmarks on large repositories
-- [ ] PyPI release
+**Goal:** turn repeated analysis of a mostly-unchanged repository into
+"detect what changed, reuse everything else" — without ever letting a
+stale or corrupted cache produce an incorrect result.
+
+- [x] Persistent cache at `.ai-context/.cache/cache.json`: per-file
+      fingerprints (size, mtime, SHA-256 content hash) and every Phase 3
+      category — structured metadata only, generated Markdown is never
+      cached (D-049)
+- [x] Deterministic change detection: new / modified / deleted / renamed
+      (exact content-hash matching, no fuzzy heuristics — D-048) /
+      unchanged, with a size+mtime fast path before any hashing (D-047)
+- [x] Selective re-analysis: the four per-file Phase 3 categories (entry
+      points, modules, routes, database models) reuse cached results for
+      untouched files; the cross-file categories (imports, circular
+      imports, module dependencies, authentication, configuration,
+      important files) always recompute in full the moment anything
+      changed — the engine's own "never sacrifice correctness" boundary
+      (D-046), implemented as an additive `only=` parameter on the
+      existing Phase 3 functions rather than a parallel code path (D-045)
+- [x] Selective generation: every document is still rendered every run;
+      only documents whose rendered content actually differs from disk
+      are rewritten (D-052) — proven safer than a static per-document
+      dependency map by a concrete counterexample
+- [x] Cache validation fails closed on every failure mode: missing,
+      corrupted JSON, schema-version mismatch, tool-version mismatch —
+      always falls back to a full analysis and self-heals the cache
+      (D-050)
+- [x] Structured `ChangeReport`: files analysed vs. reused, documents
+      regenerated vs. unchanged, new/removed routes and models, which
+      categories changed, forced-full-analysis flag, duration
+- [x] CLI: `update` (`--force` for a full regeneration), `cache-info`,
+      `cache-clear`, all with `--json` output; `scan`/`generate` unchanged
+      and fully backwards compatible
+- [x] MCP: `generate_knowledge_base` gained opt-in `incremental`/`force`
+      parameters (default off — no behaviour change for existing
+      callers); new `repository_changes` (read-only preview) and
+      `clear_cache` tools — both call `incremental/` directly, no
+      duplicated logic (D-051)
+- [x] `incremental/` — a new top-level package orchestrating
+      `analyzer.caching` and `generator`, the same architectural role
+      `mcp_server/` already has (D-051)
+- [x] Determinism proven across the new axis: an incremental run and a
+      forced full run against identical repository state produce
+      byte-identical Knowledge Bases
+- [x] 51 new tests: every cache-validity and change-kind scenario,
+      selective-generation correctness, forced-vs-incremental parity,
+      change-report content, CLI and MCP incremental commands
+- [x] Documentation
+- [x] Dogfooded against this repository: single-file and multi-file
+      changes produced exactly the expected selective regeneration; a
+      forced full regeneration afterward wrote zero bytes (byte-identical
+      to the incremental result); a corrupted cache and a bumped cache
+      version both triggered a correct full-analysis fallback
+
+**Deliberately excluded:** honouring `.gitignore` in addition to the
+built-in ignore rules (unrelated to incrementality — a Phase 1 scanner
+concern, still open), benchmarking on large real-world repositories beyond
+this project's own (~90 tracked files) and the synthetic fixtures used in
+testing, PyPI release (packaging is verified via wheel build + clean-venv
+install every phase, but nothing has been published yet).
 
 ---
 
@@ -248,3 +303,6 @@ first attempt.
 - Web UI for browsing generated context
 - CI integration that keeps `.ai-context/` current on every commit
 - Language-server integration for richer symbol data
+- Honouring `.gitignore` in the scanner, in addition to the built-in rules
+- Benchmarking incremental analysis against large, real-world repositories
+- A published PyPI release

@@ -63,17 +63,55 @@ def repository_summary(path: str) -> dict[str, object]:
 
 @mcp.tool()
 def generate_knowledge_base(
-    path: str, output_dir: str | None = None, overwrite: bool = True
+    path: str,
+    output_dir: str | None = None,
+    overwrite: bool = True,
+    incremental: bool = False,
+    force: bool = False,
 ) -> dict[str, object]:
     """Generate the .ai-context/ AI Knowledge Base for a repository and
     write it to disk (default: <path>/.ai-context). Returns generation
     statistics — file names and byte counts, never document content.
+
+    incremental=False (default) is the original full-regeneration
+    behaviour: analyse everything, overwrite unconditionally. Set
+    incremental=True to reuse cached per-file results where safe and
+    rewrite only documents whose content actually changed; set force=True
+    alongside it to ignore the cache and re-analyse fully anyway (still
+    produces byte-identical output to a full regeneration).
     """
     return _run(
         "generation",
         lambda: handlers.handle_generate_knowledge_base(
-            path, output_dir=output_dir, overwrite=overwrite
+            path,
+            output_dir=output_dir,
+            overwrite=overwrite,
+            incremental=incremental,
+            force=force,
         ),
+    )
+
+
+@mcp.tool()
+def repository_changes(path: str, output_dir: str | None = None) -> dict[str, object]:
+    """Preview what an incremental update would do, without doing it —
+    which files are new, modified, deleted or renamed since the last
+    update, and whether the cache is currently valid. Read-only: no cache
+    write, no Knowledge Base write.
+    """
+    return _run(
+        "analysis",
+        lambda: handlers.handle_repository_changes(path, output_dir=output_dir),
+    )
+
+
+@mcp.tool()
+def clear_cache(path: str, output_dir: str | None = None) -> dict[str, object]:
+    """Delete the incremental cache, forcing the next update to start
+    fresh with a full analysis.
+    """
+    return _run(
+        "cache", lambda: handlers.handle_clear_cache(path, output_dir=output_dir)
     )
 
 

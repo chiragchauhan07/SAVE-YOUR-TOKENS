@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "save-your-tokens"
-version = "0.5.0"
+version = "0.6.0"
 description = "An MCP server for AI repository context generation."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -36,11 +36,11 @@ save-your-tokens-mcp = "server:main"
 py-modules = ["cli", "server"]
 
 [tool.setuptools.packages.find]
-# Auto-discover analyzer/, generator/ and mcp_server/ and every subpackage
-# under each, rather than an explicit list — an explicit list silently
-# drops new subpackages from real (non-editable) builds. See
+# Auto-discover analyzer/, generator/, mcp_server/ and incremental/ and every
+# subpackage under each, rather than an explicit list — an explicit list
+# silently drops new subpackages from real (non-editable) builds. See
 # docs/DECISIONS.md (D-025, D-033).
-include = ["analyzer*", "generator*", "mcp_server*"]
+include = ["analyzer*", "generator*", "mcp_server*", "incremental*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

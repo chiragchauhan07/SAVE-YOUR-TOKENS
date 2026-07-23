@@ -14,7 +14,7 @@ from typing import Literal
 
 from mcp_server.models import ErrorType, ToolError
 
-Phase = Literal["analysis", "generation", "health"]
+Phase = Literal["analysis", "generation", "cache", "health"]
 
 
 def classify_exception(exc: Exception, *, phase: Phase) -> ToolError:
@@ -30,8 +30,8 @@ def classify_exception(exc: Exception, *, phase: Phase) -> ToolError:
 
     if isinstance(exc, PermissionError):
         action = (
-            "writing the Knowledge Base"
-            if phase == "generation"
+            "writing the Knowledge Base or cache"
+            if phase in ("generation", "cache")
             else "reading the repository"
         )
         return ToolError(

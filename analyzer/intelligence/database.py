@@ -19,8 +19,13 @@ _SQLALCHEMY_BASE_NAMES = frozenset({"Base", "DeclarativeBase"})
 _SQLALCHEMY_FIELD_CALLS = frozenset({"Column", "mapped_column"})
 
 
-def detect_database_models(project: Project) -> tuple[DatabaseModel, ...]:
-    parsed_modules = parse_python_files(project)
+def detect_database_models(
+    project: Project, *, only: frozenset[str] | None = None
+) -> tuple[DatabaseModel, ...]:
+    """Detect database models. ``only`` restricts AST parsing to those files
+    (Phase 6 incremental re-analysis, D-044); omit it for the full project.
+    """
+    parsed_modules = parse_python_files(project, only=only)
     models: list[DatabaseModel] = []
     for parsed in parsed_modules:
         for node in ast.walk(parsed.tree):

@@ -979,3 +979,289 @@ the analysis engine.
 **Consequence.** `save-your-tokens-mcp` (the installed console script) and
 `python server.py` (running from source) are equivalent; both end up
 calling `mcp_server.server.main()`.
+
+---
+
+## D-044 — Caching lives inside the engine (`analyzer/caching/`), not beside it
+
+**Context.** Phase 6 needed a place for fingerprinting, change detection and
+selective re-analysis. `generator/` and `mcp_server/` are both new
+top-level packages sitting *beside* `analyzer/`, each with its own reason
+(D-028, D-041) — the obvious pattern to copy.
+
+**Decision.** Caching is a subpackage of the engine, `analyzer/caching/`,
+not a new top-level `caching/` package.
+
+**Why.** `generator/` and `mcp_server/` are new top-level packages because
+each is a genuinely different *kind* of thing from `analyzer/` — a
+renderer, an adapter. Caching isn't a different kind of thing: fingerprint
+comparison and selective re-analysis *are* analysis, just an incremental
+strategy for producing the same `Project` the full analysis would. It
+belongs wherever `analyze_repository()` lives, and must be free to import
+`analyzer.intelligence` internals directly (the `only=` parameter threading
+in Phase 3's functions) — something D-028 explicitly forbids `generator/`
+from doing to `analyzer/`, and the same reasoning would forbid a sibling
+`caching/` package from doing it too.
+
+**Consequence.** `analyzer/caching/` can call
+`analyzer.intelligence.entrypoints.detect_entry_points(project, only=...)`
+directly, as an internal engine collaborator. The public re-analysis entry
+point is still just one function, `analyzer.caching.reanalyze()`, so
+downstream code never needs to know the module ever changed.
+
+---
+
+## D-045 — Selective re-parsing is an additive `only: frozenset[str] | None` parameter, not a new code path
+
+**Context.** Four Phase 3 functions (`parse_python_files`,
+`detect_entry_points`, `analyze_modules`, `detect_routes`,
+`detect_database_models`) needed a way to analyse a restricted file subset
+instead of every Python file in the repository, without risking a second,
+divergent implementation that could drift from the full-analysis one and
+silently break the "incremental output equals full output" guarantee.
+
+**Decision.** Each function gained one new keyword-only parameter,
+`only: frozenset[str] | None = None`. `None` (the default) preserves the
+exact original behaviour — every existing caller, including every Phase
+1–5 test, is untouched. When given, `only` restricts parsing/detection to
+files whose path string is a member of the set; every other line of logic
+— parsing, extraction, sorting — is identical to the full-analysis path,
+because it *is* the full-analysis path, just fed fewer files.
+
+**Why.** A parallel "incremental version" of each function would have to
+be kept in sync with its full-analysis sibling by hand forever, and any
+divergence would be a silent correctness bug — exactly the class of bug
+the "byte-identical regardless of path taken" requirement exists to
+prevent. One function, one behaviour, an optional filter is the only shape
+that can't drift.
+
+**Consequence.** `analyzer/caching/reanalysis.py` calls these functions
+with `only=` set to the files that need re-parsing, then merges the fresh
+results into the cached ones for files that didn't change (see D-046) —
+the merge is `analyzer/caching/`'s responsibility, not a second parsing
+mode inside Phase 3 itself.
+
+---
+
+## D-046 — Per-file categories are reused incrementally; cross-file categories always recompute in full
+
+**Context.** Not every Phase 3 category can be correctly reconstructed by
+re-parsing only the changed files and reusing everything else. Some
+categories (entry points, module metadata, routes, database models) are
+purely per-file: one file's result never depends on another file's
+content. Others (the import graph, circular-import detection, module
+dependencies derived from it, authentication and configuration detection,
+which both read repository-wide `Project.frameworks` state) are
+inherently cross-file: a change to file A can change what's true about
+file B without B itself changing.
+
+**Decision.** Only the four per-file categories are reused incrementally
+— cached entries for unaffected files are kept, entries for changed/
+deleted files are dropped and replaced with fresh ones, renamed files'
+cached entries are relocated to their new path (D-048). Every cross-file
+category is always fully recomputed the moment `ChangeSet.has_changes` is
+true, with zero attempt at partial reuse. `important_files` (evidence-
+ranked, itself a function of import fan-in) is likewise always recomputed
+from the merged per-file data.
+
+**Why.** This is the spec's own "never sacrifice correctness — fall back
+to full analysis whenever it can't be guaranteed" rule, applied at
+category granularity instead of all-or-nothing. Proving a per-file
+category safe to reuse is a one-line argument (no cross-file dependency
+exists in its detector). Proving a cross-file category safe would require
+reconstructing exactly which other files a change could have affected —
+correct in principle, but a substantially larger and more fragile piece of
+logic for a category of change (an import graph edit) that's usually a
+small fraction of total analysis time.
+
+**Consequence.** Incremental analysis is not "everything is incremental" —
+it is "the four categories that can be proven safe are incremental, the
+rest are recomputed, and recomputing them is still far cheaper than
+re-parsing every file from scratch" (files are only re-parsed for the
+per-file categories; imports/authentication/configuration derive from the
+already-merged `Project`, not from disk again).
+
+---
+
+## D-047 — Change detection: size+mtime first, content hash only when needed
+
+**Context.** Detecting whether a file changed needs to be both correct
+(never miss a real change) and cheap (never hash every file on every run —
+the spec explicitly calls out avoiding unnecessary hashing).
+
+**Decision.** `FileFingerprint` stores size, mtime and a SHA-256 content
+hash. A file is provisionally unchanged if its size and mtime both match
+the cached fingerprint; only when either differs is the file actually
+opened and hashed. `test_touched_but_unchanged_content_is_not_modified`
+covers the inverse case directly — a touched file with byte-identical
+content (a `git checkout`-style rewrite) is not treated as modified, since
+its mtime changing triggers a rehash whose result then matches the cached
+hash.
+
+**Why.** This is the standard git/make-style optimisation: mtime is a
+cheap, usually-reliable signal, but never trusted alone, since a rewrite
+with unchanged content (or a mtime-preserving copy) must never be
+misreported. Hashing is the source of truth; the stat check is purely an
+optimisation to avoid paying its cost when nothing could have changed.
+
+**Consequence.** A no-op second run (nothing touched) never opens a single
+file's content — a pure `stat()` sweep. A run after an IDE or checkout
+operation that rewrites file mtimes without changing content pays one
+rehash per touched file, then correctly reports zero modifications.
+
+---
+
+## D-048 — Rename detection is exact content-hash matching only
+
+**Context.** A file that moves without changing content should ideally be
+recognised as a rename (reuse its cached analysis at the new path) rather
+than as an unrelated delete+add pair (which would force full re-parsing of
+"new" content that was never actually new).
+
+**Decision.** After classifying files as new/modified/deleted, every
+new file's content hash is compared against every deleted file's cached
+hash; an exact match is a `RenamedFile`. No fuzzy matching, similarity
+scoring, or partial-content heuristics — "where practical" from the spec
+is read here as "deterministically provable", not "best guess".
+
+**Why.** Consistent with "never guess" (Rule 6, `CLAUDE.md`): a fuzzy
+rename heuristic could misattribute an unrelated new file to an unrelated
+deleted one, silently reusing wrong analysis for a file that only happens
+to look similar. An exact hash match has zero false positives by
+construction — content did not change, only its path did — and every
+correctness guarantee of the per-file merge (D-046) still holds.
+
+**Consequence.** A rename with unchanged content costs zero re-parsing —
+the cached per-file entries are relocated to the new path and reused
+verbatim. A rename *with* content changes is correctly treated as a
+delete+add (new content genuinely needs analysis), not forced into the
+rename path.
+
+---
+
+## D-049 — The cache stores structured metadata only, never generated Markdown
+
+**Context.** Phase 6 needed a persistent cache. The most literally "faster"
+option would cache the rendered Knowledge Base documents themselves and
+serve them back unmodified when nothing relevant changed.
+
+**Decision.** `.ai-context/.cache/cache.json` stores only fingerprints and
+Phase 3 category data (the same frozen-dataclass shapes `Project` already
+uses, round-tripped through `analyzer/serialization.py`). Rendered
+Markdown is never cached; every `update_knowledge_base()` call re-renders
+every document from the (possibly-reused) `Project`, every time.
+
+**Why.** Caching rendered output would tie document freshness to whatever
+invalidation logic decided to cache it under — exactly the kind of
+implicit correctness dependency the spec explicitly rules out ("never
+cache generated markdown"). Caching structured facts instead means the
+generator (`generator/`) never needs to know incremental analysis exists;
+it always receives a complete, correct `Project` and renders normally
+(D-028 stays intact — `generator/` gained no new responsibilities).
+Selective *writing* (D-052) is what actually avoids redundant disk I/O,
+achieved by comparing freshly-rendered content against what's on disk, not
+by skipping rendering.
+
+**Consequence.** Rendering the full Knowledge Base costs the same on every
+`update_knowledge_base()` call, incremental or not — cheap in practice
+(milliseconds, pure string building, no I/O) relative to the analysis it
+follows. The only redundant work incremental analysis actually removes is
+file parsing and disk writes, not markdown generation.
+
+---
+
+## D-050 — Cache validation always fails closed, never open
+
+**Context.** A persistent cache can go stale in ways beyond "some files
+changed": the file can be missing, truncated, hand-edited, written by an
+older or newer version of this tool, or point at a repository that moved.
+
+**Decision.** `CacheStatus` is a closed enum — `MISSING`, `VALID`,
+`CORRUPTED`, `VERSION_MISMATCH`, `TOOL_VERSION_MISMATCH`, `CLEARED` — and
+`load_cache()` never raises; any failure to parse, validate the schema
+version (`CACHE_SCHEMA_VERSION`), or validate the tool version
+(`analyzer.__version__`) returns `(None, <specific status>)` rather than a
+partially-trusted `Cache`. Every one of those statuses is treated
+identically downstream: no previous cache, full analysis, a fresh valid
+cache written on the way out.
+
+**Why.** The spec is explicit that a stale or damaged cache must never
+produce an incorrect result — the only way to guarantee that
+unconditionally is for validation to fail closed: any uncertainty about
+whether a cached fact is still valid must default to "no, recompute",
+never "probably still fine". The specific status is kept (rather than
+collapsing straight to a boolean) purely for diagnostics — `cache-info`
+and `repository_changes` can tell a user *why* their cache wasn't trusted.
+
+**Consequence.** Upgrading this tool automatically invalidates every
+existing cache on next use (tool-version mismatch) rather than risking a
+newer analyzer reusing an older version's cached category data, whose
+shape or semantics might have changed between versions.
+
+---
+
+## D-051 — `incremental/` is a new top-level package, mirroring `mcp_server/`'s role
+
+**Context.** Orchestrating a full incremental update — detect changes,
+reanalyse selectively, regenerate selectively, build a change report — is
+logic that spans both `analyzer/` (via `analyzer.caching`) and
+`generator/`. Neither existing layer is allowed to depend on the other in
+this direction (`generator/` imports only `analyzer.models`, per D-028),
+and this orchestration is neither pure analysis nor pure rendering.
+
+**Decision.** A new top-level package, `incremental/`, same architectural
+role `mcp_server/` already has (D-028's own reasoning extended): it
+imports the public APIs of both `analyzer/` (`analyzer.caching.reanalyze`)
+and `generator/` (`generate_knowledge_base`,
+`write_documents_if_changed`), and contains the orchestration logic
+neither of those two is allowed to hold itself.
+
+**Why.** Keeps the existing dependency rule intact rather than carving an
+exception into it — `analyzer/` and `generator/` remain exactly as
+independently reusable as they were before Phase 6. The CLI's `update`
+command and the MCP server's `generate_knowledge_base`/`repository_changes`/
+`clear_cache` tools both call into `incremental/` directly rather than
+each reimplementing the same orchestration (mirrors the reasoning behind
+`mcp_server`'s own handlers/tools split and `analyzer/serialization.py`'s
+extraction in D-034 — one implementation, multiple thin callers).
+
+**Consequence.** `incremental/serialization.py` (dict-building for
+`ChangeSet`/`ChangeReport`/`CacheInfo`/`ChangePreview`) is shared verbatim
+between `cli.py`'s `--json` output and `mcp_server/handlers.py`'s tool
+responses — the same "one conversion, not two" discipline D-034 already
+established for `analyzer/serialization.py`.
+
+---
+
+## D-052 — Selective generation compares rendered content against disk, not a static dependency map
+
+**Context.** Deciding which of the twelve Knowledge Base documents to
+rewrite after an incremental update needs a way to know which documents a
+given change could have affected. The obvious-looking approach is a
+static table mapping each document to the `Project` fields it reads
+(`incremental/dependencies.py::DOCUMENT_FIELDS` exists and is exactly this
+table) and using it to decide which documents to skip re-rendering
+entirely.
+
+**Decision.** `DOCUMENT_FIELDS` is used only for the `ChangeReport`'s
+human-facing `changed_categories` field — never to gate which documents
+get rendered or written. Every document is rendered on every
+`update_knowledge_base()` call; `generator/writer.py::write_documents_if_changed`
+then compares each freshly-rendered document's content against what's
+currently on disk and writes only the ones that actually differ.
+
+**Why.** A concrete test scenario proved the static-map approach would
+have been wrong: a file's size changing (with no other structural change)
+alters `PROJECT_STRUCTURE.md`'s content (it reports file sizes) even
+though `PROJECT_STRUCTURE.md` isn't naturally "about" any single Phase 3
+category a dependency map would key on. A static map is a claim about
+what *could* affect a document, inferred by a human reading renderer
+source — exactly the kind of guess Rule 6 forbids when a cheap, provably
+correct alternative exists. Direct content comparison has no such gap: a
+document is rewritten if and only if its content actually changed, by
+construction, regardless of which `Project` fields fed it.
+
+**Consequence.** Rendering cost is paid for every document on every run
+(cheap — see D-049); disk I/O and the resulting `ChangeReport` correctly
+reflect exactly what changed, with zero risk of a stale document being
+left unwritten because a dependency map missed an indirect relationship.

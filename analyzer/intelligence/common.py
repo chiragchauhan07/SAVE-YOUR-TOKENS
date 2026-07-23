@@ -33,10 +33,21 @@ class ParsedModule:
     tree: ast.Module
 
 
-def parse_python_files(project: Project) -> tuple[ParsedModule, ...]:
-    """Parse every Python file in the project, skipping ones that fail."""
+def parse_python_files(
+    project: Project, *, only: frozenset[str] | None = None
+) -> tuple[ParsedModule, ...]:
+    """Parse Python files in the project, skipping ones that fail.
+
+    ``only``, when given, restricts parsing to files whose relative path
+    (as a POSIX string) is in that set — the hook Phase 6's incremental
+    engine uses to re-parse just the changed files (D-044). Every existing
+    caller leaves it as ``None`` and gets the original, unrestricted
+    behaviour unchanged.
+    """
     parsed = []
     for file in project.files_with_extension(".py"):
+        if only is not None and str(file.path) not in only:
+            continue
         tree = _parse_file(project, file)
         if tree is not None:
             parsed.append(ParsedModule(file, tree))

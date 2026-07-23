@@ -16,8 +16,13 @@ from analyzer.models import Confidence, EntryPoint, Project
 _CONVENTIONAL_SCRIPT_NAMES = frozenset({"main.py", "app.py", "run.py"})
 
 
-def detect_entry_points(project: Project) -> tuple[EntryPoint, ...]:
-    parsed_modules = parse_python_files(project)
+def detect_entry_points(
+    project: Project, *, only: frozenset[str] | None = None
+) -> tuple[EntryPoint, ...]:
+    """Detect entry points. ``only`` restricts AST parsing to those files
+    (Phase 6 incremental re-analysis, D-044); omit it for the full project.
+    """
+    parsed_modules = parse_python_files(project, only=only)
     entry_points: list[EntryPoint] = []
 
     for parsed in parsed_modules:

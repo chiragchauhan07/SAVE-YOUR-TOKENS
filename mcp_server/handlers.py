@@ -8,6 +8,12 @@ directly, with no MCP harness required.
 Every handler analyses a repository at most once, via ``analyzer.analyze_repository``,
 and reuses the resulting ``Project`` for anything else it needs (a summary, a
 Knowledge Base) — never a second scan, never a second AST parse.
+
+Phase 6 added incremental capabilities (``incremental=True`` on
+``handle_generate_knowledge_base``, plus ``handle_repository_changes`` and
+``handle_clear_cache``) by reusing the top-level ``incremental`` package —
+the same functions the CLI's ``update``/``cache-info``/``cache-clear``
+commands call, not a second implementation (D-051).
 """
 
 from __future__ import annotations
@@ -17,6 +23,9 @@ from pathlib import Path
 from analyzer import Project, analyze_repository
 from generator import generate_knowledge_base
 from generator.writer import write_documents
+from incremental import clear_cache as _clear_cache
+from incremental import preview_changes, update_knowledge_base
+from incremental.serialization import change_preview_dict, change_report_dict
 from mcp_server.utils import build_health_status, build_repository_summary
 
 
@@ -51,13 +60,46 @@ def handle_repository_summary(path: str) -> dict[str, object]:
 
 
 def handle_generate_knowledge_base(
-    path: str, *, output_dir: str | None = None, overwrite: bool = True
+    path: str,
+    *,
+    output_dir: str | None = None,
+    overwrite: bool = True,
+    incremental: bool = False,
+    force: bool = False,
 ) -> dict[str, object]:
-    """Analyse a repository and write its Knowledge Base to disk."""
+    """Analyse a repository and write its Knowledge Base to disk.
+
+    ``incremental=False`` (the default) preserves this tool's original
+    Phase 5 behaviour exactly — a full analysis and an unconditional
+    overwrite — so existing callers see no change. ``incremental=True``
+    routes through the Phase 6 incremental engine instead: cached per-file
+    results are reused wherever safe, and only documents whose rendered
+    content actually changed are rewritten. ``force`` (only meaningful
+    with ``incremental=True``) ignores the cache and re-analyses fully.
+    """
+    if incremental:
+        report = update_knowledge_base(path, output_dir=output_dir, force=force)
+        return change_report_dict(report)
     project = analyze_repository(path)
     return _build_knowledge_base_result(
         project, path, write=True, output_dir=output_dir, overwrite=overwrite
     )
+
+
+def handle_repository_changes(
+    path: str, *, output_dir: str | None = None
+) -> dict[str, object]:
+    """What would change on the next incremental update — read-only."""
+    preview = preview_changes(path, output_dir=output_dir)
+    return change_preview_dict(preview)
+
+
+def handle_clear_cache(
+    path: str, *, output_dir: str | None = None
+) -> dict[str, object]:
+    """Delete the incremental cache, forcing the next update to start fresh."""
+    removed = _clear_cache(path, output_dir=output_dir)
+    return {"cleared": removed}
 
 
 def handle_health_check() -> dict[str, object]:
