@@ -5,9 +5,11 @@
 Turn a software repository into a compact, structured briefing that an AI
 coding agent can read in seconds instead of rediscovering by search.
 
-> **Status: Phase 1 — repository scanner.** The analysis foundation is
-> implemented and tested. Context generation and the MCP server are not built
-> yet. See the [Roadmap](#roadmap).
+> **Status: Phase 2 — Project Identification Engine.** The repository scanner
+> and the identification detectors (languages, frameworks, package managers,
+> build tools, CI/CD, containerization, environment surfaces, repository
+> classification) are implemented and tested. Context generation and the MCP
+> server are not built yet. See the [Roadmap](#roadmap).
 
 ---
 
@@ -60,19 +62,27 @@ the core.
 
 ## Features
 
-**Available now (Phase 1)**
+**Available now (Phase 1 + 2)**
 
 - Recursive repository scanning with directory pruning
 - Deterministic, sorted, reproducible output
 - Ignore rules covering Python, JS/TS, Java, Rust, Go and Dart ecosystems
 - Binary, media and build-artefact filtering
 - Repository statistics: file counts, size, extension breakdown, largest files
+- Language detection, ordered by byte prevalence
+- Framework detection (FastAPI, Django, Flask, Streamlit, Litestar, Sanic,
+  React, Next.js, Vue, Nuxt, Express, NestJS, Angular, Svelte, Spring Boot,
+  Laravel, Flutter) with confidence and evidence attached to every result
+- Package manager detection (pip, Poetry, uv, Pipenv, npm, Yarn, pnpm, Bun,
+  Maven, Gradle, Cargo, Go Modules)
+- Build tool, CI/CD, containerization and configuration-surface detection
+- Repository classification (Full Stack Web App, REST API, Frontend, Mobile
+  App, Monorepo, CLI Tool, Python Library, AI/ML Project, Unknown)
 - Typed `Project` model as the engine's public contract
 - CLI with human and JSON output
 
 **Planned**
 
-- Language and framework detection (Phase 2)
 - Entry point, API route and database discovery (Phase 3)
 - Context file generation (Phase 4)
 - MCP server (Phase 5)
@@ -82,7 +92,7 @@ the core.
 Requires Python 3.11+. No runtime dependencies.
 
 ```bash
-git clone <repository-url> save-your-tokens
+git clone https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS.git save-your-tokens
 cd save-your-tokens
 python -m pip install -e ".[dev]"
 ```
@@ -94,8 +104,37 @@ python cli.py scan /path/to/repository
 ```
 
 ```
-Repository : my-api
-Path       : /home/dev/my-api
+Repository  : my-api
+Project Type: Full Stack AI Web Application
+Path        : /home/dev/my-api
+
+Languages:
+  Python       72.0%  (140 files)
+  TypeScript   25.0%  (60 files)
+  CSS           3.0%  (12 files)
+
+Frameworks:
+  FastAPI
+  React
+
+Package Managers:
+  Poetry
+  npm
+
+Build:
+  Docker
+  Vite
+
+CI/CD:
+  GitHub Actions
+
+Containerization:
+  Docker Compose
+
+Environment:
+  .env.example
+  compose.yaml
+
 Files      : 284
 Directories: 46
 Total size : 1.8 MB
@@ -121,12 +160,17 @@ Options: `--ignore DIR` (repeatable), `--include-hidden`, `--follow-symlinks`.
 Or use the engine directly:
 
 ```python
-from analyzer import scan_repository
+from analyzer import analyze_repository
 
-project = scan_repository("/path/to/repository")
-print(project.stats.total_files)
-print(project.files_with_extension(".py"))
-print(project.find("package.json"))
+project = analyze_repository("/path/to/repository")
+print(project.repository_type)              # Detection(name='REST API', ...)
+print([f.name for f in project.frameworks])  # ['FastAPI']
+print(project.languages)                     # (LanguageStat(name='Python', ...), ...)
+
+# Or scan and identify as two separate steps:
+from analyzer import scan_repository, identify_project
+
+project = identify_project(scan_repository("/path/to/repository"))
 ```
 
 ## Architecture
@@ -153,8 +197,8 @@ Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | Phase | Scope | Status |
 |-------|-------------------------------------------|--------|
 | 1 | Repository scanner, models, ignore rules  | Done |
-| 2 | Language and framework detection          | Next |
-| 3 | Entry points, API routes, database        | Planned |
+| 2 | Project Identification Engine             | Done |
+| 3 | Entry points, API routes, database        | Next |
 | 4 | Context file generation                   | Planned |
 | 5 | MCP server                                | Planned |
 | 6 | Caching, incremental rescans, packaging   | Planned |
@@ -168,7 +212,10 @@ Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
   generators generate. Never mixed.
 - **Standard library first.** Every dependency is a liability.
 - **Extensible by data.** New ecosystems should mean new entries in
-  `constants.py`, not new branches in the scanner.
+  `constants.py` or `detectors/signatures.py`, not new branches in a scanner
+  or detector.
+- **Never guess.** Every detection carries confidence and evidence; "unknown"
+  is always a valid, honest result.
 - **No premature optimisation.** Build the current phase well; leave notes for
   the next one.
 

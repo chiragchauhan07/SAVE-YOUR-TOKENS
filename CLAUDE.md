@@ -27,19 +27,35 @@ replacement for one.
 3. **Determinism.** Two scans of an unchanged repository must produce identical
    output. Sort before returning. Never let dict or filesystem ordering leak
    into results.
-4. **No file content is read in Phase 1.** The scanner stats files; it does not
-   open them.
+4. **Content reading is metadata-only.** The Phase 1 scanner never opens a
+   file. Phase 2 detectors may read *manifests* (`pyproject.toml`,
+   `package.json`, lockfiles, well-known config files) via
+   `analyzer/detectors/manifests.py` — but never application source code. No
+   AST, no import scanning, no inspection of function bodies. See D-011.
 5. **Stay in phase.** Do not implement future phases early. Leave a `TODO` or a
    note in `docs/ROADMAP.md` instead.
+6. **Never guess.** Every detector attaches confidence and evidence to what it
+   reports, and reports nothing when it has neither. "Unknown" / an empty
+   result is always valid.
 
 ## Layout
 
 ```
 analyzer/          The reusable engine. No MCP, no CLI, no I/O beyond reading.
-  constants.py     Ignore rules as data. Add ecosystems here, not in scanner.
-  models.py        Frozen dataclasses: FileInfo, RepositoryStats, Project.
+  constants.py     Phase 1 ignore rules as data.
+  models.py        Frozen dataclasses: FileInfo, RepositoryStats, Project,
+                    Detection, Confidence, LanguageStat.
   scanner.py       Phase 1: the repository walk.
   utils.py         Small shared helpers.
+  detectors/       Phase 2: identify what the scanned repository is.
+    signatures.py       Evidence tables as data — languages, frameworks,
+                         package managers, build tools, CI, containers.
+    manifests.py         Manifest reading + generic evidence-matching engine.
+    language_detector.py, framework_detector.py, package_manager_detector.py,
+    build_detector.py, cicd_detector.py, container_detector.py,
+    environment_detector.py, repository_classifier.py
+                         One narrow question each; see each module's docstring.
+    __init__.py          identify_project() orchestrates all of the above.
 cli.py             Thin CLI over the engine. For inspection, not the product.
 server.py          MCP entry point. Placeholder until Phase 5.
 tests/             pytest, no fixtures beyond tmp_path.
@@ -49,10 +65,14 @@ docs/              Architecture, roadmap, decisions, standards.
 
 ## Current state
 
-**Phase 1 is complete.** The repository scanner works, is tested, and is the
-only implemented feature. `Project` is the contract every later phase consumes.
+**Phase 1 and Phase 2 are complete.** The engine scans a repository (Phase 1)
+and identifies what it is — languages, frameworks, package managers, build
+tools, CI/CD, containerization, environment surfaces, overall repository type
+(Phase 2). `analyzer.analyze_repository()` is the one-call composition of
+both; `Project` is the contract every later phase consumes.
 
-Phase 2 (language and framework detection) is next. See `docs/ROADMAP.md`.
+Phase 3 (deep analysis: entry points, API routes, database layer) is next.
+See `docs/ROADMAP.md`.
 
 ## Conventions
 
@@ -62,6 +82,13 @@ Phase 2 (language and framework detection) is next. See `docs/ROADMAP.md`.
   cannot — see `docs/DECISIONS.md`.
 - Frozen dataclasses over dictionaries for anything structured.
 - Standard library first. A new runtime dependency needs a decision entry.
+  Phase 2 parses TOML (`tomllib`) and JSON (`json`) — both stdlib. No YAML
+  parsing dependency: where YAML content matters (Kubernetes manifests,
+  `pubspec.yaml`), detectors use directory/filename convention or a plain
+  substring check instead (D-011, D-017).
+- Detection evidence tables (`analyzer/detectors/signatures.py`) are data,
+  not logic — same principle as `analyzer/constants.py` (D-006). Add a new
+  language/framework/tool there, not in a detector function.
 - Docstrings explain *why*; the code already says *what*.
 
 Full detail in `docs/CODING_STANDARDS.md`.

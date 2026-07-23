@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+from collections.abc import Set as AbstractSet
 from pathlib import Path, PurePosixPath
 
 from analyzer.constants import (
@@ -87,7 +88,7 @@ def scan_repository(
 
 def _is_ignored_directory(
     name: str,
-    ignored_directories: set[str],
+    ignored_directories: AbstractSet[str],
     include_hidden: bool,
 ) -> bool:
     """Whether a directory should be pruned from the walk."""

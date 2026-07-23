@@ -64,24 +64,50 @@ and is called from the adapter. Logic never accumulates in the adapter.
 frameworks. The scanner produces *facts about files*, never *conclusions about
 the project*.
 
-### 2. Detectors — Phase 2
+### 2. Detectors — implemented
 
-**Responsibility:** turn the file list into conclusions.
+**Responsibility:** turn the file list into conclusions about what the
+repository *is*.
 
-Each detector is independent, receives a `Project`, and answers one question:
-*is this a Django project? a Next.js project? what languages are here?*
+Eight independent modules under `analyzer/detectors/`, each answering one
+question about a `Project`: what languages, what frameworks, what package
+manager, what build tool, what CI provider, what containerization, what
+configuration surfaces, and — combining all of the above — what kind of
+repository overall. Every answer is a `Detection` (name, `Confidence`,
+evidence) or a tuple of them; "unknown" is always a valid result, never an
+exception.
 
-Design intent: a registry of detectors, each with a `detect(project)` method
-returning a confidence-scored result. Adding a framework means adding a
-detector, never editing existing ones.
+Two shared support modules make this data-driven, the same way
+`analyzer/constants.py` does for Phase 1's ignore rules:
+
+- `signatures.py` — languages, frameworks, package managers, build tools,
+  CI providers and container tooling as data tables. Supporting a new one is
+  an entry here, not a new branch in a detector.
+- `manifests.py` — the one place allowed to read file *content* (D-011): a
+  small engine for reading manifests (`pyproject.toml`, `package.json`,
+  ...) and matching them against the signature tables. Also the layer that
+  reaches dot-prefixed paths the scanner's default walk excludes
+  (`.github/workflows`, `.env.example`) via direct filesystem probes
+  (D-012), since the scanner itself is intentionally left unchanged.
+
+`identify_project()` (`detectors/__init__.py`) runs every detector via
+direct function calls — no registry, no dynamic discovery (D-015) — and
+returns a new `Project` with the results attached. `analyze_repository()`
+in `analyzer/__init__.py` composes scanning and identification into one
+call.
+
+**Explicitly not its job:** parsing application source code. Reading that
+`pyproject.toml` declares `fastapi` is a manifest fact; reading `app.py` to
+see how routes are wired is Phase 3's job.
 
 ### 3. Parsers — Phase 3
 
-**Responsibility:** extract structured data from specific file types.
+**Responsibility:** extract structured data from application source itself.
 
-`package.json` → dependencies. `urls.py` → routes. `models.py` → schema.
-Parsers are the first layer permitted to read file contents. Each targets one
-format and knows nothing about the others.
+`urls.py` → routes. `models.py` → schema. Entry points, API surfaces,
+database layer. This is the first layer permitted to read and parse
+*application* code (manifests are already handled in Phase 2 — see D-011).
+Each parser targets one format/language and knows nothing about the others.
 
 Python source is parsed with the standard library `ast` module — never with
 regular expressions where a real parser exists.
@@ -114,18 +140,34 @@ Currently:
 
 ```
 Project
-├── root: Path                  absolute, resolved
+├── root: Path                        absolute, resolved
 ├── name: str
-├── files: tuple[FileInfo, ...] sorted by path
-└── stats: RepositoryStats
-    ├── total_files, total_directories, total_size_bytes
-    ├── files_by_extension: dict[str, int]   ordered by frequency
-    └── largest_files: tuple[FileInfo, ...]
+├── files: tuple[FileInfo, ...]       sorted by path            (Phase 1)
+├── stats: RepositoryStats                                      (Phase 1)
+│   ├── total_files, total_directories, total_size_bytes
+│   ├── files_by_extension: dict[str, int]   ordered by frequency
+│   └── largest_files: tuple[FileInfo, ...]
+├── languages: tuple[LanguageStat, ...]      ordered by prevalence (Phase 2)
+├── frameworks: tuple[Detection, ...]                              (Phase 2)
+├── package_managers: tuple[Detection, ...]                        (Phase 2)
+├── build_tools: tuple[Detection, ...]                             (Phase 2)
+├── ci_providers: tuple[Detection, ...]                            (Phase 2)
+├── container_tools: tuple[Detection, ...]                         (Phase 2)
+├── environment_files: tuple[Detection, ...]                       (Phase 2)
+└── repository_type: Detection | None                              (Phase 2)
 ```
 
-Later phases extend `Project` with `languages`, `frameworks`, `entry_points`,
-`routes` and similar fields. Extension is additive: existing fields keep their
-meaning so earlier consumers never break.
+`Detection` (name, `Confidence`, evidence tuple) is one shared type reused
+across every Phase 2 category rather than a bespoke class per category
+(D-013) — frameworks, package managers, build tools, CI providers,
+container tooling and environment surfaces are all "I found X, here's why".
+`Confidence` is `LOW < MEDIUM < HIGH`.
+
+Later phases extend `Project` with `entry_points`, `routes`, `database` and
+similar fields. Extension is additive: existing fields keep their meaning so
+earlier consumers never break. All Phase 2 fields default to empty/`None`
+until `identify_project()` has run, so a bare `scan_repository()` result
+remains a valid `Project`.
 
 ## Determinism
 

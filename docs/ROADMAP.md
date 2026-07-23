@@ -22,22 +22,50 @@ tested and documented.
 
 ---
 
-## Phase 2 — Language & Framework Detection
+## Phase 2 — Project Identification Engine ✅
 
-**Goal:** answer "what *is* this repository?"
+**Goal:** answer "what *is* this repository?" — without reading business logic.
 
-- [ ] Extension → language mapping, with per-language file and size counts
-- [ ] Primary language determination
-- [ ] Manifest parsing: `pyproject.toml`, `requirements.txt`, `package.json`,
-      `go.mod`, `Cargo.toml`, `pom.xml`, `composer.json`
-- [ ] Framework detection via manifest dependencies plus structural signatures
-      (Django, Flask, FastAPI, Express, Next.js, React, Vue, Spring, Rails)
-- [ ] Confidence scoring — a signal is evidence, not proof
-- [ ] Detector registry so new frameworks are additive
-- [ ] `Project.languages`, `Project.frameworks`
+- [x] Language detection: extension → language, ordered by byte prevalence
+- [x] Manifest reading: `requirements.txt`, `pyproject.toml`, `Pipfile`,
+      `package.json`, `composer.json`, `pom.xml`/`build.gradle` (substring)
+- [x] Framework detection (Python: FastAPI, Django, Flask, Streamlit,
+      Litestar, Sanic · JS/TS: React, Next.js, Vue, Nuxt, Express, NestJS,
+      Angular, Svelte · Java: Spring Boot · PHP: Laravel · Dart: Flutter)
+- [x] Package manager detection (pip, Poetry, uv, Pipenv, npm, Yarn, pnpm,
+      Bun, Maven, Gradle, Cargo, Go Modules)
+- [x] Build tool detection (Docker, Vite, Turborepo, Nx, Webpack, Rollup)
+- [x] CI/CD detection (GitHub Actions, GitLab CI, CircleCI, Jenkins, Azure
+      Pipelines)
+- [x] Containerization detection (Docker Compose, Kubernetes, Helm)
+- [x] Environment surface detection (`.env.example`/`.template`/`.sample`,
+      compose files) — presence only, never content
+- [x] Repository classification (Full Stack / REST API / Frontend / Mobile /
+      Monorepo / CLI Tool / Python Library / AI Project / Machine Learning
+      Project / Unknown), priority-ordered, single label (D-014)
+- [x] Confidence + evidence on every `Detection` — never a guess
+- [x] `Project.languages`, `.frameworks`, `.package_managers`, `.build_tools`,
+      `.ci_providers`, `.container_tools`, `.environment_files`,
+      `.repository_type`
+- [x] `analyzer.analyze_repository()` — scan + identify in one call
+- [x] Unit tests per detector: positive, negative, unknown, conflicting
+      evidence, hidden-path handling
+- [x] Documentation
 
-**Open question:** whether a monorepo needs multiple detected stacks per
-project, or one project per workspace package. Decide before implementing.
+**Resolved open question (monorepo stacks):** a scan reports the *root's*
+own frameworks/package manager only (D-016) — nested manifests belong to
+subprojects and aren't read as evidence about the whole repository. Monorepo
+detection is a separate, explicit structural check (workspace config files),
+not an aggregation of every nested manifest. Per-workspace-package detail is
+deferred; see Phase 3 note below.
+
+**Deliberately excluded:** import-statement scanning (manifest evidence
+alone is sufficient and far cheaper — see `docs/DECISIONS.md`), YAML content
+parsing (no new dependency; directory/filename convention and substring
+checks suffice for Kubernetes/Helm/Flutter), Electron/Tauri/React Native
+detection (not in the Phase 2 spec's framework list — candidates for a
+future addendum), reading any file's *content* for environment detection
+(presence only).
 
 ---
 
@@ -53,6 +81,10 @@ project, or one project per workspace package. Decide before implementing.
 - [ ] Configuration: `.env.example`, settings modules, env var references
 - [ ] Important-file ranking (see below)
 - [ ] Dependency graph from import statements
+- [ ] Per-workspace-package identification for monorepos: run Phase 2's
+      detectors rooted at each workspace member (from `pnpm-workspace.yaml`
+      / `package.json` `workspaces`) rather than only the repository root
+      (deferred from Phase 2, D-016)
 
 Python is parsed with the standard library `ast`. Other languages start with
 conservative signature matching; a real parser is added only when heuristics

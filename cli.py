@@ -1,8 +1,10 @@
 """Command-line interface for the Save your Tokens analysis engine.
 
-Phase 1 exposes a single command, ``scan``, which reports what the scanner
-found. It exists to exercise and inspect the engine; it is not the product.
-The MCP server (see ``server.py``) is the primary interface.
+Exposes a single command, ``scan``, which scans a repository and identifies
+it: languages, frameworks, package managers, build tools, CI/CD,
+containerization and configuration surfaces. It exists to exercise and
+inspect the engine; it is not the product. The MCP server (see
+``server.py``) is the primary interface.
 
 Usage:
     python cli.py scan /path/to/repo
@@ -16,7 +18,7 @@ import json
 import sys
 from pathlib import Path
 
-from analyzer import Project, __version__, scan_repository
+from analyzer import Detection, LanguageStat, Project, __version__, analyze_repository
 from analyzer.utils import human_readable_size
 
 #: How many extensions the human-readable summary lists.
@@ -29,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        project = scan_repository(
+        project = analyze_repository(
             args.path,
             extra_ignored_directories=args.ignore,
             include_hidden=args.include_hidden,
@@ -89,11 +91,27 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _print_summary(project: Project) -> None:
-    """Write a human-readable overview of a scan to stdout."""
+    """Write a human-readable identity card and scan overview to stdout."""
+    print(f"Repository  : {project.name}")
+    if project.repository_type:
+        print(f"Project Type: {project.repository_type.name}")
+    print(f"Path        : {project.root}")
+
+    if project.languages:
+        print("\nLanguages:")
+        for lang in project.languages:
+            percentage = f"{lang.percentage:>5.1f}%"
+            print(f"  {lang.name:<12} {percentage}  ({lang.file_count} files)")
+
+    _print_detections("Frameworks", project.frameworks)
+    _print_detections("Package Managers", project.package_managers)
+    _print_detections("Build", project.build_tools)
+    _print_detections("CI/CD", project.ci_providers)
+    _print_detections("Containerization", project.container_tools)
+    _print_detections("Environment", project.environment_files)
+
     stats = project.stats
-    print(f"Repository : {project.name}")
-    print(f"Path       : {project.root}")
-    print(f"Files      : {stats.total_files:,}")
+    print(f"\nFiles      : {stats.total_files:,}")
     print(f"Directories: {stats.total_directories:,}")
     print(f"Total size : {human_readable_size(stats.total_size_bytes)}")
 
@@ -113,12 +131,49 @@ def _print_summary(project: Project) -> None:
         print(f"  {size:>10}  {file.path}")
 
 
+def _print_detections(label: str, detections: tuple[Detection, ...]) -> None:
+    if not detections:
+        return
+    print(f"\n{label}:")
+    for detection in detections:
+        print(f"  {detection.name}")
+
+
+def _detection_dict(detection: Detection) -> dict:
+    return {
+        "name": detection.name,
+        "confidence": detection.confidence.name,
+        "evidence": list(detection.evidence),
+    }
+
+
+def _language_dict(language: LanguageStat) -> dict:
+    return {
+        "name": language.name,
+        "file_count": language.file_count,
+        "size_bytes": language.size_bytes,
+        "percentage": language.percentage,
+    }
+
+
 def _as_dict(project: Project) -> dict:
-    """Convert a scan result to JSON-serialisable primitives."""
+    """Convert an analysis result to JSON-serialisable primitives."""
     stats = project.stats
     return {
         "name": project.name,
         "root": str(project.root),
+        "repository_type": (
+            _detection_dict(project.repository_type)
+            if project.repository_type
+            else None
+        ),
+        "languages": [_language_dict(lang) for lang in project.languages],
+        "frameworks": [_detection_dict(d) for d in project.frameworks],
+        "package_managers": [_detection_dict(d) for d in project.package_managers],
+        "build_tools": [_detection_dict(d) for d in project.build_tools],
+        "ci_providers": [_detection_dict(d) for d in project.ci_providers],
+        "container_tools": [_detection_dict(d) for d in project.container_tools],
+        "environment_files": [_detection_dict(d) for d in project.environment_files],
         "stats": {
             "total_files": stats.total_files,
             "total_directories": stats.total_directories,
