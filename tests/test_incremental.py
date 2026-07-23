@@ -60,7 +60,7 @@ def test_first_update_writes_every_document(tmp_path):
     assert set(report.documents_regenerated) == _EXPECTED_KB_FILES
     assert report.documents_unchanged == ()
     assert report.forced_full_analysis is True
-    output_dir = tmp_path / ".ai-context"
+    output_dir = tmp_path / ".blueprint"
     assert output_dir.is_dir()
     for filename in _EXPECTED_KB_FILES:
         assert (output_dir / filename).is_file()
@@ -128,7 +128,7 @@ def test_force_matches_incremental_result(tmp_path):
     )
     update_knowledge_base(tmp_path)  # settle into incremental state
 
-    output_dir = tmp_path / ".ai-context"
+    output_dir = tmp_path / ".blueprint"
     before = {f.name: f.read_bytes() for f in output_dir.glob("*.md")}
 
     report = update_knowledge_base(tmp_path, force=True)
@@ -140,7 +140,7 @@ def test_force_matches_incremental_result(tmp_path):
 
 def test_update_matches_cli_generate_byte_for_byte(tmp_path):
     # The output directories must sit outside the scanned repo — writing
-    # into a custom (non-`.ai-context`) directory *inside* the repo would
+    # into a custom (non-`.blueprint`) directory *inside* the repo would
     # make the second scan see the first run's own output files.
     repo_root = tmp_path / "repo"
     write_files(repo_root, {"app.py": _FLASK_APP, "models.py": "x = 1\n"})
@@ -214,7 +214,7 @@ def test_update_respects_custom_output_dir(tmp_path):
     custom = tmp_path / "custom-kb"
     update_knowledge_base(tmp_path, output_dir=custom)
     assert (custom / "OVERVIEW.md").is_file()
-    assert not (tmp_path / ".ai-context").exists()
+    assert not (tmp_path / ".blueprint").exists()
 
 
 # --- cache inspection / clearing -------------------------------------------------
@@ -242,11 +242,11 @@ def test_inspect_cache_valid_after_update(tmp_path):
 def test_clear_cache_removes_file(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
     update_knowledge_base(tmp_path)
-    assert cache_path(tmp_path / ".ai-context").is_file()
+    assert cache_path(tmp_path / ".blueprint").is_file()
 
     removed = clear_cache(tmp_path)
     assert removed is True
-    assert not cache_path(tmp_path / ".ai-context").exists()
+    assert not cache_path(tmp_path / ".blueprint").exists()
 
 
 def test_clear_cache_when_nothing_to_clear(tmp_path):
@@ -273,8 +273,8 @@ def test_preview_changes_does_not_write_cache_or_knowledge_base(tmp_path):
 
     assert preview.cache_status is CacheStatus.MISSING
     assert len(preview.change_set.new_files) == 1
-    assert not cache_path(tmp_path / ".ai-context").exists()
-    assert not (tmp_path / ".ai-context").exists()
+    assert not cache_path(tmp_path / ".blueprint").exists()
+    assert not (tmp_path / ".blueprint").exists()
 
 
 def test_preview_changes_reflects_pending_modifications(tmp_path):

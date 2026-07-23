@@ -5,11 +5,13 @@ before making changes.
 
 ## What this project is
 
-**Save your Tokens** — an MCP server for AI repository context generation.
+**Blueprint** — an MCP server for AI repository context generation.
+Formerly released as "Save your Tokens"; renamed in v1.0.0 with no change
+to the engine or its guarantees (D-053).
 
 It analyses a software repository **deterministically** (`analyzer/`) and
 generates an AI-native Knowledge Base — twelve cross-referenced Markdown
-files in `.ai-context/` (`generator/`), this project's primary output —
+files in `.blueprint/` (`generator/`), this project's primary output —
 exposed to AI coding assistants through the Model Context Protocol
 (`mcp_server/`). An MCP-compatible coding agent (Claude Code, Cursor, ...)
 calls the server or reads the generated files to understand a codebase
@@ -129,7 +131,7 @@ analyzer/          The reusable engine. No MCP, no CLI, no I/O beyond reading.
                          recomputes cross-file ones once anything changed
                          (D-046). Selective re-parsing is the `only=`
                          parameter added to five Phase 3 functions (D-045).
-    cache_io.py            load/save/clear .ai-context/.cache/cache.json.
+    cache_io.py            load/save/clear .blueprint/.cache/cache.json.
                          CacheStatus always fails closed — MISSING, VALID,
                          CORRUPTED, VERSION_MISMATCH, TOOL_VERSION_MISMATCH,
                          CLEARED (D-050). Structured metadata only, never
@@ -148,6 +150,10 @@ generator/         Phase 4: Project -> AI Knowledge Base. Top-level package,
                        detection_table.
   navigation.py         RELATED_DOCUMENTS: static adjacency table driving
                        every file's "## Related Context" footer (D-030).
+  output.py              DEFAULT_OUTPUT_DIRNAME (".blueprint"),
+                       default_output_dir() — resolves the default KB
+                       location and migrates a pre-rename ".ai-context/"
+                       directory in place, losslessly (D-053).
   writer.py             The only module that touches disk. Forces LF line
                        endings so output is byte-identical cross-platform.
                        write_documents_if_changed() (Phase 6) writes only
@@ -223,9 +229,9 @@ ranked important files (Phase 3). `analyzer.analyze_repository()` is the
 one-call composition of all three; `Project` is the contract every later
 phase consumes.
 
-The generator (Phase 4) turns that `Project` into the `.ai-context/`
+The generator (Phase 4) turns that `Project` into the `.blueprint/`
 Knowledge Base — twelve cross-referenced Markdown files, this project's
-primary output. `python cli.py generate <path>` writes it (always a full
+primary output. `blueprint generate <path>` writes it (always a full
 regeneration); `generator.generate_knowledge_base(project)` returns it as
 `{filename: markdown}` without touching disk.
 
@@ -233,21 +239,29 @@ The MCP server (Phase 5, `mcp_server/`) exposes both over the Model Context
 Protocol as six tools (`analyze_repository`, `repository_summary`,
 `generate_knowledge_base`, `health_check`, `repository_changes`,
 `clear_cache`), stdio transport, using the official MCP Python SDK.
-`python server.py` or the installed `save-your-tokens-mcp` console script
-runs it. It produces byte-identical Knowledge Bases to the CLI, since both
+`python server.py` or the installed `blueprint-mcp` console script runs
+it. It produces byte-identical Knowledge Bases to the CLI, since both
 call the same underlying functions.
 
 The Incremental Intelligence layer (Phase 6, `analyzer/caching/` +
 `incremental/`) makes repeated analysis cheap without changing what it
-produces: a persistent cache at `.ai-context/.cache/cache.json` tracks
-per-file fingerprints and Phase 3 category data; `python cli.py update
-<path>` (or `generate_knowledge_base(incremental=True)` over MCP) detects
-what changed, reuses everything else wherever that's provably safe, and
+produces: a persistent cache at `.blueprint/.cache/cache.json` tracks
+per-file fingerprints and Phase 3 category data; `blueprint update <path>`
+(or `generate_knowledge_base(incremental=True)` over MCP) detects what
+changed, reuses everything else wherever that's provably safe, and
 rewrites only the Knowledge Base documents whose content actually
 changed. Any cache problem (missing, corrupted, wrong schema/tool
 version) falls back to a full analysis automatically — an incremental run
 and a full run against the same repository state are guaranteed to
 produce byte-identical output.
+
+The project was rebranded from "Save your Tokens" to **Blueprint** in
+v1.0.0 (D-053): the default Knowledge Base directory, console script
+names, MCP server identity and one environment variable all changed, with
+deprecated aliases/fallbacks kept for a transition period and an
+automatic, lossless migration for any pre-rename `.ai-context/` directory.
+No internal module, package or class was renamed — only user-facing
+surface.
 
 No further phases are currently planned; see `docs/ROADMAP.md` for
 possible future work.
@@ -307,13 +321,13 @@ Full detail in `docs/CODING_STANDARDS.md`.
 ## Working commands
 
 ```bash
-python cli.py scan .              # human summary
-python cli.py scan . --json       # machine-readable
-python cli.py generate .          # write .ai-context/ Knowledge Base (always full)
-python cli.py update .            # incremental regeneration (--force for full)
-python cli.py cache-info .        # inspect the incremental cache
-python cli.py cache-clear .       # delete the incremental cache
-python server.py                  # run the MCP server over stdio
+blueprint scan .                  # human summary (or: python cli.py scan .)
+blueprint scan . --json           # machine-readable
+blueprint generate .              # write .blueprint/ Knowledge Base (always full)
+blueprint update .                # incremental regeneration (--force for full)
+blueprint cache-info .            # inspect the incremental cache
+blueprint cache-clear .           # delete the incremental cache
+blueprint-mcp                     # run the MCP server over stdio (or: python server.py)
 python -m pytest -q               # test suite
 ruff check .                      # lint
 mypy analyzer/ generator/ mcp_server/ incremental/ cli.py server.py --ignore-missing-imports

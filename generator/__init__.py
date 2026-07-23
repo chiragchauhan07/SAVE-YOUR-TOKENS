@@ -20,6 +20,7 @@ from pathlib import Path
 
 from analyzer.models import Project
 from generator import navigation
+from generator.output import DEFAULT_OUTPUT_DIRNAME, default_output_dir
 from generator.renderers import (
     ai_context,
     architecture,
@@ -36,7 +37,12 @@ from generator.renderers import (
 )
 from generator.writer import write_documents
 
-__all__ = ["generate_knowledge_base", "write_knowledge_base"]
+__all__ = [
+    "DEFAULT_OUTPUT_DIRNAME",
+    "default_output_dir",
+    "generate_knowledge_base",
+    "write_knowledge_base",
+]
 
 #: Every renderer taking just ``Project``, in the order they populate the
 #: Knowledge Base. ai_context and index are generated afterward — both need

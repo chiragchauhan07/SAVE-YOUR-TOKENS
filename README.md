@@ -1,14 +1,19 @@
-# Save your Tokens
+# Blueprint
 
-**An MCP Server for AI Repository Context Generation.**
+**Deterministic repository analysis for AI coding agents, over the Model
+Context Protocol.**
+
+> Formerly "Save your Tokens." Same engine, same guarantees, new name —
+> see [Rebrand](#rebrand-from-save-your-tokens) below if you're upgrading.
 
 Turn a software repository into a compact, structured briefing that an AI
 coding agent can read in seconds instead of rediscovering by search.
 
-> **Status: Phase 6 complete.** The repository scanner, identification
-> detectors, Python code intelligence, the `.ai-context/` Knowledge Base
-> generator, the MCP server, and an incremental re-analysis engine are all
-> implemented and tested. See the [Roadmap](#roadmap) and
+> **Status: Phase 6 complete, first stable release under the Blueprint
+> name.** The repository scanner, identification detectors, Python code
+> intelligence, the `.blueprint/` Knowledge Base generator, the MCP
+> server, and an incremental re-analysis engine are all implemented and
+> tested. See the [Roadmap](#roadmap) and
 > [docs/MCP_SERVER.md](docs/MCP_SERVER.md) for MCP installation and
 > client configuration.
 
@@ -27,11 +32,11 @@ understanding that disappears when the session ends.
 
 ## The approach
 
-Precompute the answers. `Save your Tokens` analyses a repository statically and
+Precompute the answers. `Blueprint` analyses a repository statically and
 writes an AI-native Knowledge Base:
 
 ```
-.ai-context/
+.blueprint/
 ├── AI_CONTEXT.md          Start here — reading order, entry points, critical files
 ├── INDEX.md               Table of contents for the whole Knowledge Base
 ├── OVERVIEW.md            Repository type, languages, frameworks, tech stack
@@ -93,7 +98,7 @@ the core.
   models, authentication mechanisms, configuration surfaces, module
   dependency relationships, evidence-ranked important files
 - AI-native Knowledge Base generation: twelve deterministic, cross-referenced
-  Markdown files in `.ai-context/`, every file always present with graceful
+  Markdown files in `.blueprint/`, every file always present with graceful
   "none detected" content, never a copy of source code
 - An MCP server (six tools: `analyze_repository`, `repository_summary`,
   `generate_knowledge_base`, `health_check`, `repository_changes`,
@@ -117,8 +122,8 @@ have no runtime dependencies; the MCP server needs the official `mcp` SDK
 (the project's only dependency, and only for that layer).
 
 ```bash
-git clone https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS.git save-your-tokens
-cd save-your-tokens
+git clone https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS.git blueprint
+cd blueprint
 python -m pip install -e ".[dev]"      # CLI + generator + MCP server + dev tools
 ```
 
@@ -131,13 +136,18 @@ python -m pip install -e .
 MCP server only (as a published package, once released):
 
 ```bash
-python -m pip install "save-your-tokens[mcp]"
+python -m pip install "blueprint[mcp]"
 ```
+
+This installs the `blueprint` and `blueprint-mcp` console scripts.
+`save-your-tokens` and `save-your-tokens-mcp` are still installed as
+deprecated aliases during the transition — see
+[Rebrand](#rebrand-from-save-your-tokens) below.
 
 ## Usage
 
 ```bash
-python cli.py scan /path/to/repository
+blueprint scan /path/to/repository
 ```
 
 ```
@@ -209,7 +219,7 @@ Largest files:
 Machine-readable output:
 
 ```bash
-python cli.py scan /path/to/repository --json
+blueprint scan /path/to/repository --json
 ```
 
 Options: `--ignore DIR` (repeatable), `--include-hidden`, `--follow-symlinks`.
@@ -217,11 +227,11 @@ Options: `--ignore DIR` (repeatable), `--include-hidden`, `--follow-symlinks`.
 Generate the Knowledge Base:
 
 ```bash
-python cli.py generate /path/to/repository
+blueprint generate /path/to/repository
 ```
 
 ```
-Generated 12 files in /path/to/repository/.ai-context
+Generated 12 files in /path/to/repository/.blueprint
   AI_CONTEXT.md
   API_ROUTES.md
   ARCHITECTURE.md
@@ -236,13 +246,13 @@ Generated 12 files in /path/to/repository/.ai-context
   PROJECT_STRUCTURE.md
 ```
 
-`--output DIR` writes elsewhere instead of `<path>/.ai-context`.
+`--output DIR` writes elsewhere instead of `<path>/.blueprint`.
 
 Incremental regeneration — reuses the cache from a prior `update` (or
 `generate`), re-analysing and rewriting only what actually changed:
 
 ```bash
-python cli.py update /path/to/repository
+blueprint update /path/to/repository
 ```
 
 ```
@@ -270,8 +280,8 @@ byte-identical output to a plain incremental run against the same state).
 `cache-info` and `cache-clear` inspect and delete the cache:
 
 ```bash
-python cli.py cache-info /path/to/repository
-python cli.py cache-clear /path/to/repository
+blueprint cache-info /path/to/repository
+blueprint cache-clear /path/to/repository
 ```
 
 Or use the engine and generator directly:
@@ -290,7 +300,7 @@ print(project.routes)                        # (Route(method='GET', path='/users
 print(project.entry_points)                  # (EntryPoint(kind='fastapi_app', ...), ...)
 
 documents = generate_knowledge_base(project)  # {"OVERVIEW.md": "# Overview\n...", ...}
-write_knowledge_base(project, Path("/path/to/repository/.ai-context"))
+write_knowledge_base(project, Path("/path/to/repository/.blueprint"))
 
 # Or run each phase separately:
 from analyzer import scan_repository, identify_project, analyze_intelligence
@@ -307,7 +317,7 @@ the CLI, including incremental updates:
 
 ```bash
 python server.py                # run over stdio
-save-your-tokens-mcp             # equivalent, once installed
+blueprint-mcp                    # equivalent, once installed
 ```
 
 Claude Code configuration (`.mcp.json`):
@@ -315,8 +325,8 @@ Claude Code configuration (`.mcp.json`):
 ```json
 {
   "mcpServers": {
-    "save-your-tokens": {
-      "command": "save-your-tokens-mcp"
+    "blueprint": {
+      "command": "blueprint-mcp"
     }
   }
 }
@@ -335,7 +345,7 @@ Analysis Engine          ← analyzer/     (deterministic, no MCP, no LLM)
                             scanner → detectors → intelligence
                             analyzer/caching/ — incremental re-analysis
     ↓
-Knowledge Base Generator ← generator/    (Project → .ai-context/, the primary output)
+Knowledge Base Generator ← generator/    (Project → .blueprint/, the primary output)
     ↓
 Incremental Orchestrator ← incremental/  (update/preview/inspect/clear the cache)
     ↓
@@ -365,8 +375,41 @@ Detail in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 | 4 | AI Knowledge Base Generator                | Done |
 | 5 | MCP Integration Layer                     | Done |
 | 6 | Incremental Intelligence Engine            | Done |
+| — | Rebrand: Save your Tokens → Blueprint      | Done |
 
 Detail in [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Rebrand from "Save your Tokens"
+
+The project was originally released as **Save your Tokens**. As of v1.0.0
+it's **Blueprint** — same engine, same deterministic guarantees, same
+production quality; only the name, the default output directory and the
+console script names changed.
+
+- **Knowledge Base directory:** `.ai-context/` → `.blueprint/`. If a
+  repository still has a `.ai-context/` directory at the default location,
+  the next `generate` or `update` call (CLI or MCP) renames it to
+  `.blueprint/` automatically, in place — the existing Knowledge Base and
+  incremental cache are preserved, not regenerated from scratch. A custom
+  `--output`/`output_dir` is never touched by this migration.
+- **Incremental cache:** migrates along with the directory above. Because
+  this release also bumps the tool version, a migrated cache is
+  automatically recognised as being from an older version and triggers one
+  full re-analysis (not a partial/incorrect one) the first time it's used
+  after upgrading — then a fresh, valid cache is written. You never end up
+  with stale or corrupted state.
+- **CLI:** `save-your-tokens` / `save-your-tokens-mcp` still work — both
+  are installed as deprecated aliases pointing at the exact same code —
+  but print a one-time deprecation notice to stderr pointing at
+  `blueprint` / `blueprint-mcp`.
+- **Environment variable:** `SAVE_YOUR_TOKENS_LOG_LEVEL` still works as a
+  deprecated fallback for `BLUEPRINT_LOG_LEVEL` (a warning is logged if
+  only the old name is set).
+- **Python package name:** `save-your-tokens` → `blueprint` in
+  `pyproject.toml`. Nothing has been published to PyPI under either name
+  yet, so this is a plain rename with no migration hazard.
+
+See `docs/DECISIONS.md` (D-053) for the full rationale.
 
 ## Development philosophy
 

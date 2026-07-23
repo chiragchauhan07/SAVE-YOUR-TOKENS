@@ -51,7 +51,7 @@ def test_update_command_first_run(repo, capsys):
     assert "Cache: missing" in out
     assert "Files analyzed: 1" in out
     assert "API_ROUTES.md" in out
-    assert (repo / ".ai-context" / "OVERVIEW.md").is_file()
+    assert (repo / ".blueprint" / "OVERVIEW.md").is_file()
 
 
 def test_update_command_second_run_no_changes(repo, capsys):
@@ -90,7 +90,7 @@ def test_update_command_custom_output_dir(repo, tmp_path):
     exit_code = cli.main(["update", str(repo), "--output", str(output)])
     assert exit_code == 0
     assert (output / "OVERVIEW.md").is_file()
-    assert not (repo / ".ai-context").exists()
+    assert not (repo / ".blueprint").exists()
 
 
 def test_update_command_nonexistent_path_errors_gracefully(capsys):

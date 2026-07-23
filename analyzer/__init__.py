@@ -1,4 +1,4 @@
-"""Save your Tokens — deterministic repository analysis engine.
+"""Blueprint — deterministic repository analysis engine.
 
 This package is the reusable core of the project. It has no dependency on
 MCP, on any CLI framework, or on any language model. Every interface (CLI,
@@ -30,7 +30,7 @@ from analyzer.models import (
 )
 from analyzer.scanner import scan_repository
 
-__version__ = "0.6.0"
+__version__ = "1.0.0"
 
 __all__ = [
     "Confidence",

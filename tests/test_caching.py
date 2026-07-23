@@ -49,7 +49,7 @@ def _all_fields_equal(a, b) -> bool:
 
 def test_first_run_no_cache(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     updated, change_set, status, previous = reanalyze(_project(tmp_path), cache_file)
 
     assert status is CacheStatus.MISSING
@@ -62,7 +62,7 @@ def test_first_run_no_cache(tmp_path):
 
 def test_second_run_no_changes_reuses_cache_verbatim(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     first, _, _, _ = reanalyze(_project(tmp_path), cache_file)
 
     second, change_set, status, previous = reanalyze(_project(tmp_path), cache_file)
@@ -74,7 +74,7 @@ def test_second_run_no_changes_reuses_cache_verbatim(tmp_path):
 
 def test_incremental_matches_full_analysis_after_no_changes(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP, "models.py": "x = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
     incremental, *_ = reanalyze(_project(tmp_path), cache_file)
 
@@ -87,7 +87,7 @@ def test_incremental_matches_full_analysis_after_no_changes(tmp_path):
 
 def test_single_file_modified_only_reparses_that_file(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP, "models.py": "x = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "app.py").write_text(
@@ -105,7 +105,7 @@ def test_single_file_modified_only_reparses_that_file(tmp_path):
 
 def test_multiple_files_modified(tmp_path):
     write_files(tmp_path, {"a.py": "X = 1\n", "b.py": "Y = 2\n", "c.py": "Z = 3\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "a.py").write_text("X = 10\n")
@@ -121,7 +121,7 @@ def test_multiple_files_modified(tmp_path):
 def test_touched_but_unchanged_content_is_not_modified(tmp_path):
     """mtime changes but content doesn't (e.g. a checkout) must not count."""
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     path = tmp_path / "app.py"
@@ -137,7 +137,7 @@ def test_touched_but_unchanged_content_is_not_modified(tmp_path):
 
 def test_deleted_file_dropped_from_results(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP, "models.py": "x = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "models.py").unlink()
@@ -151,7 +151,7 @@ def test_deleted_file_dropped_from_results(tmp_path):
 
 def test_new_file_added(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     write_files(tmp_path, {"extra.py": "CONST = 1\n"})
@@ -166,7 +166,7 @@ def test_new_file_added(tmp_path):
 
 def test_renamed_file_content_identical_is_detected_as_rename(tmp_path):
     write_files(tmp_path, {"models.py": "CONST = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "models.py").rename(tmp_path / "data_models.py")
@@ -185,7 +185,7 @@ def test_renamed_file_content_identical_is_detected_as_rename(tmp_path):
 
 def test_rename_with_content_change_is_delete_plus_new_not_a_rename(tmp_path):
     write_files(tmp_path, {"models.py": "CONST = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "models.py").unlink()
@@ -202,7 +202,7 @@ def test_rename_with_content_change_is_delete_plus_new_not_a_rename(tmp_path):
 
 def test_force_ignores_cache_and_matches_full_analysis(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP, "models.py": "x = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     updated, change_set, status, previous = reanalyze(
@@ -220,7 +220,7 @@ def test_force_ignores_cache_and_matches_full_analysis(tmp_path):
 
 def test_cache_corruption_falls_back_to_full_analysis(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text("{not valid json", encoding="utf-8")
 
@@ -233,7 +233,7 @@ def test_cache_corruption_falls_back_to_full_analysis(tmp_path):
 
 def test_cache_missing_required_keys_is_corrupted(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     cache_file.parent.mkdir(parents=True, exist_ok=True)
     cache_file.write_text(json.dumps({"cache_version": 1}), encoding="utf-8")
 
@@ -246,7 +246,7 @@ def test_cache_missing_required_keys_is_corrupted(tmp_path):
 
 def test_cache_version_mismatch_falls_back(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     raw = json.loads(cache_file.read_text(encoding="utf-8"))
@@ -262,7 +262,7 @@ def test_cache_version_mismatch_falls_back(tmp_path):
 
 def test_tool_version_mismatch_falls_back(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     raw = json.loads(cache_file.read_text(encoding="utf-8"))
@@ -276,7 +276,7 @@ def test_tool_version_mismatch_falls_back(tmp_path):
 
 def test_cache_missing_file_reports_missing_status(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     cache, status = load_cache(cache_file, str(tmp_path))
     assert cache is None
     assert status is CacheStatus.MISSING
@@ -290,7 +290,7 @@ def test_django_manage_entry_point_not_duplicated_across_incremental_runs(tmp_pa
         tmp_path,
         {"manage.py": "#!/usr/bin/env python\n", "app_config.py": "X = 1\n"},
     )
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "app_config.py").write_text("X = 2\n")
@@ -304,7 +304,7 @@ def test_django_manage_entry_point_not_duplicated_across_incremental_runs(tmp_pa
 
 
 def test_empty_repository(tmp_path):
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     updated, change_set, status, previous = reanalyze(_project(tmp_path), cache_file)
     assert updated.modules == ()
     assert not change_set.has_changes  # no files exist to be "new"
@@ -321,7 +321,7 @@ def test_nested_packages(tmp_path):
             "pkg/sub/sibling.py": "Y = 1\n",
         },
     )
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     (tmp_path / "pkg/sub/sibling.py").write_text("Y = 2\n")
@@ -337,7 +337,7 @@ def test_nested_packages(tmp_path):
 
 def test_hashing_skipped_when_size_and_mtime_unchanged(tmp_path, monkeypatch):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     reanalyze(_project(tmp_path), cache_file)
 
     calls = []
@@ -359,7 +359,7 @@ def test_hashing_skipped_when_size_and_mtime_unchanged(tmp_path, monkeypatch):
 
 def test_save_and_load_cache_round_trip(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     updated, *_ = reanalyze(_project(tmp_path), cache_file)
 
     cache, status = load_cache(cache_file, str(tmp_path))
@@ -371,7 +371,7 @@ def test_save_and_load_cache_round_trip(tmp_path):
 
 def test_save_cache_is_deterministic(tmp_path):
     write_files(tmp_path, {"app.py": _FLASK_APP, "models.py": "x = 1\n"})
-    cache_file = cache_path(tmp_path / ".ai-context")
+    cache_file = cache_path(tmp_path / ".blueprint")
     updated, *_ = reanalyze(_project(tmp_path), cache_file)
 
     from analyzer.caching.models import CACHE_SCHEMA_VERSION, Cache

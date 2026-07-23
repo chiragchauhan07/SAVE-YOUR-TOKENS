@@ -22,6 +22,7 @@ from pathlib import Path
 
 from analyzer import Project, analyze_repository
 from generator import generate_knowledge_base
+from generator.output import default_output_dir
 from generator.writer import write_documents
 from incremental import clear_cache as _clear_cache
 from incremental import preview_changes, update_knowledge_base
@@ -114,7 +115,7 @@ def _build_knowledge_base_result(
     output_dir: str | None,
     overwrite: bool,
 ) -> dict[str, object]:
-    resolved_output = Path(output_dir) if output_dir else Path(path) / ".ai-context"
+    resolved_output = Path(output_dir) if output_dir else default_output_dir(Path(path))
 
     if write and not overwrite and _has_existing_content(resolved_output):
         return {

@@ -24,7 +24,7 @@ from mcp_server.errors import Phase, classify_exception
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("save-your-tokens")
+mcp = FastMCP("blueprint")
 
 
 @mcp.tool()
@@ -38,7 +38,7 @@ def analyze_repository(
     """Analyze a repository: scan it, identify its technology stack, and
     understand its Python structure. Set include_knowledge_base to also
     generate the AI Knowledge Base in the same call, and write_knowledge_base
-    to write it to output_dir (default: <path>/.ai-context).
+    to write it to output_dir (default: <path>/.blueprint).
     """
     return _run(
         "analysis",
@@ -69,8 +69,8 @@ def generate_knowledge_base(
     incremental: bool = False,
     force: bool = False,
 ) -> dict[str, object]:
-    """Generate the .ai-context/ AI Knowledge Base for a repository and
-    write it to disk (default: <path>/.ai-context). Returns generation
+    """Generate the .blueprint/ AI Knowledge Base for a repository and
+    write it to disk (default: <path>/.blueprint). Returns generation
     statistics — file names and byte counts, never document content.
 
     incremental=False (default) is the original full-regeneration

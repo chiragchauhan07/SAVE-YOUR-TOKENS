@@ -357,7 +357,7 @@ def test_index_renderer_links_every_document():
 
 
 def test_write_knowledge_base_creates_directory_and_files(tmp_path):
-    output_dir = tmp_path / "nested" / ".ai-context"
+    output_dir = tmp_path / "nested" / ".blueprint"
     project = make_project()
     written = write_knowledge_base(project, output_dir)
     assert len(written) == len(_EXPECTED_FILES)

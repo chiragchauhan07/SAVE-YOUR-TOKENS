@@ -1,6 +1,6 @@
 # MCP Server
 
-Save your Tokens exposes its analysis engine and Knowledge Base generator
+Blueprint exposes its analysis engine and Knowledge Base generator
 through the [Model Context Protocol](https://modelcontextprotocol.io), so
 any MCP-compatible AI coding assistant can call it directly instead of
 shelling out to the CLI.
@@ -9,22 +9,22 @@ The MCP layer is a thin adapter (`mcp_server/`) over the same engine the CLI
 uses (`analyzer/`, `generator/`, and — for the incremental tools —
 `incremental/`). It contains no analysis logic of its own — see
 [docs/ARCHITECTURE.md](ARCHITECTURE.md) for the layering, and
-[docs/DECISIONS.md](DECISIONS.md) (D-034 through D-043, D-051) for the
-reasoning behind specific choices below.
+[docs/DECISIONS.md](DECISIONS.md) (D-034 through D-043, D-051, D-053) for
+the reasoning behind specific choices below.
 
 ## Installation
 
 Requires Python 3.11+.
 
 ```bash
-python -m pip install "save-your-tokens[mcp]"
+python -m pip install "blueprint[mcp]"
 ```
 
 From source:
 
 ```bash
-git clone https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS.git save-your-tokens
-cd save-your-tokens
+git clone https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS.git blueprint
+cd blueprint
 python -m pip install -e ".[dev]"
 ```
 
@@ -42,13 +42,18 @@ python server.py
 Or, once installed:
 
 ```bash
-save-your-tokens-mcp
+blueprint-mcp
 ```
 
 Both run the same server over **stdio transport** and are meant to be
 launched by an MCP client, not run interactively — there is no terminal
 output to watch for a healthy server; a client speaks JSON-RPC to it over
 stdin/stdout.
+
+`save-your-tokens-mcp` (the pre-rename name) is still installed as a
+deprecated alias and works identically, printing a one-time deprecation
+notice to stderr — see [Rebrand](../README.md#rebrand-from-save-your-tokens)
+in the root README.
 
 ## MCP client configuration
 
@@ -59,8 +64,8 @@ Add to your MCP configuration (`.mcp.json`, or via `claude mcp add`):
 ```json
 {
   "mcpServers": {
-    "save-your-tokens": {
-      "command": "save-your-tokens-mcp"
+    "blueprint": {
+      "command": "blueprint-mcp"
     }
   }
 }
@@ -71,9 +76,9 @@ Or, running from a source checkout without installing:
 ```json
 {
   "mcpServers": {
-    "save-your-tokens": {
+    "blueprint": {
       "command": "python",
-      "args": ["/absolute/path/to/save-your-tokens/server.py"]
+      "args": ["/absolute/path/to/blueprint/server.py"]
     }
   }
 }
@@ -112,8 +117,8 @@ useful for confirming an installation is wired up correctly.
 {
   "success": true,
   "status": "ok",
-  "package_version": "0.6.0",
-  "server_version": "0.6.0",
+  "package_version": "1.0.0",
+  "server_version": "1.0.0",
   "mcp_sdk_version": "1.28.1",
   "python_version": "3.12.4",
   "platform": "Windows-11-10.0.26200-SP0"
@@ -159,7 +164,7 @@ the Knowledge Base in the same call — analysed exactly once either way
 | `path` | string | required | Repository to analyse |
 | `include_knowledge_base` | boolean | `false` | Also generate the Knowledge Base |
 | `write_knowledge_base` | boolean | `false` | Also write it to disk (implies generation) |
-| `output_dir` | string \| null | `<path>/.ai-context` | Where to write |
+| `output_dir` | string \| null | `<path>/.blueprint` | Where to write |
 | `overwrite` | boolean | `true` | Overwrite an existing, non-empty output directory |
 
 ```json
@@ -169,7 +174,7 @@ the Knowledge Base in the same call — analysed exactly once either way
   "knowledge_base": {
     "written": true,
     "skipped": false,
-    "output_directory": "/abs/path/.ai-context",
+    "output_directory": "/abs/path/.blueprint",
     "files": ["AI_CONTEXT.md", "..."],
     "total_bytes": 12345
   }
@@ -181,16 +186,20 @@ the Knowledge Base in the same call — analysed exactly once either way
 
 ### `generate_knowledge_base`
 
-Generate and write the `.ai-context/` Knowledge Base. Returns statistics —
+Generate and write the `.blueprint/` Knowledge Base. Returns statistics —
 file names and byte counts, **never document content** (D-040): a client
 with filesystem access to the analysed repository reads the files
 directly; echoing potentially tens of kilobytes of Markdown back through
 the protocol on every call would be unnecessary work.
 
+If the default output directory doesn't exist yet but a pre-rename
+`.ai-context/` directory does, it's renamed to `.blueprint/` in place
+first — see [Rebrand](../README.md#rebrand-from-save-your-tokens).
+
 | Argument | Type | Default | Meaning |
 |---|---|---|---|
 | `path` | string | required | Repository to analyse |
-| `output_dir` | string \| null | `<path>/.ai-context` | Where to write |
+| `output_dir` | string \| null | `<path>/.blueprint` | Where to write |
 | `overwrite` | boolean | `true` | Overwrite an existing, non-empty output directory |
 | `incremental` | boolean | `false` | Reuse the cache where safe, write only changed documents |
 | `force` | boolean | `false` | With `incremental=True`, ignore the cache and re-analyse fully anyway (still byte-identical to a full regeneration) |
@@ -200,7 +209,7 @@ the protocol on every call would be unnecessary work.
   "success": true,
   "written": true,
   "skipped": false,
-  "output_directory": "/abs/path/.ai-context",
+  "output_directory": "/abs/path/.blueprint",
   "files": ["AI_CONTEXT.md", "API_ROUTES.md", "..."],
   "total_bytes": 12345
 }
@@ -214,7 +223,7 @@ With `overwrite: false` against a directory that already has content:
   "written": false,
   "skipped": true,
   "reason": "Output directory already contains files and overwrite is False.",
-  "output_directory": "/abs/path/.ai-context"
+  "output_directory": "/abs/path/.blueprint"
 }
 ```
 
@@ -253,7 +262,7 @@ an update is worth running at all.
 | Argument | Type | Default | Meaning |
 |---|---|---|---|
 | `path` | string | required | Repository to inspect |
-| `output_dir` | string \| null | `<path>/.ai-context` | Where the cache would live |
+| `output_dir` | string \| null | `<path>/.blueprint` | Where the cache would live |
 
 ```json
 {
@@ -272,7 +281,7 @@ the Knowledge Base itself.
 | Argument | Type | Default | Meaning |
 |---|---|---|---|
 | `path` | string | required | Repository whose cache to clear |
-| `output_dir` | string \| null | `<path>/.ai-context` | Where the cache lives |
+| `output_dir` | string \| null | `<path>/.blueprint` | Where the cache lives |
 
 ```json
 {
@@ -299,26 +308,27 @@ as a raw traceback (D-035). `error.type` is one of:
 
 The real exception (with a full traceback) is always logged — to **stderr
 only**, never stdout, since stdout carries the protocol stream on stdio
-transport (D-038). Set `SAVE_YOUR_TOKENS_LOG_LEVEL=DEBUG` (or `INFO`) in
-the server's environment for more detail while developing; the default is
-`WARNING` (quiet).
+transport (D-038). Set `BLUEPRINT_LOG_LEVEL=DEBUG` (or `INFO`) in the
+server's environment for more detail while developing; the default is
+`WARNING` (quiet). `SAVE_YOUR_TOKENS_LOG_LEVEL` still works as a
+deprecated fallback if `BLUEPRINT_LOG_LEVEL` isn't set.
 
 ## CLI usage
 
-The CLI (`cli.py`) remains the primary command-line interface and is not
-replaced by the MCP server — both call the same engine and generator
-functions, so they always produce identical results for the same
-repository (verified directly:
+The CLI (`cli.py`, installed as the `blueprint` console script) remains
+the primary command-line interface and is not replaced by the MCP server
+— both call the same engine and generator functions, so they always
+produce identical results for the same repository (verified directly:
 `tests/test_mcp_server.py::test_mcp_generated_knowledge_base_matches_cli_generated_knowledge_base`
 byte-compares the two).
 
 ```bash
-python cli.py scan /path/to/repo              # human-readable summary
-python cli.py scan /path/to/repo --json        # full structured data
-python cli.py generate /path/to/repo           # write .ai-context/ (always full)
-python cli.py update /path/to/repo             # incremental — same engine as generate_knowledge_base(incremental=true)
-python cli.py cache-info /path/to/repo         # inspect the cache
-python cli.py cache-clear /path/to/repo        # delete the cache
+blueprint scan /path/to/repo              # human-readable summary
+blueprint scan /path/to/repo --json        # full structured data
+blueprint generate /path/to/repo           # write .blueprint/ (always full)
+blueprint update /path/to/repo             # incremental — same engine as generate_knowledge_base(incremental=true)
+blueprint cache-info /path/to/repo         # inspect the cache
+blueprint cache-clear /path/to/repo        # delete the cache
 ```
 
 See the root [README.md](../README.md) for the full CLI reference.

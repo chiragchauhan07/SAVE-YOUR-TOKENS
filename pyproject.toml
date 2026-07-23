@@ -3,15 +3,15 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "save-your-tokens"
-version = "0.6.0"
-description = "An MCP server for AI repository context generation."
+name = "blueprint"
+version = "1.0.0"
+description = "Blueprint — deterministic repository analysis and an AI-native Knowledge Base, over the Model Context Protocol."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
-keywords = ["mcp", "static-analysis", "ai", "developer-tools", "context"]
+keywords = ["mcp", "static-analysis", "ai", "developer-tools", "context", "knowledge-base"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,7 +28,19 @@ dependencies = []
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.8", "mcp>=1.0.0"]
 mcp = ["mcp>=1.0.0"]
 
+[project.urls]
+Homepage = "https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS"
+Repository = "https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS"
+Changelog = "https://github.com/chiragchauhan07/SAVE-YOUR-TOKENS/blob/main/CHANGELOG.md"
+
 [project.scripts]
+blueprint = "cli:main"
+blueprint-mcp = "server:main"
+# Deprecated aliases, kept for a transition period after the "Save your
+# Tokens" -> Blueprint rename (see docs/DECISIONS.md). Both point at the
+# exact same entry functions; cli.py/server.py detect invocation under the
+# legacy name (via sys.argv[0]) and print a one-time deprecation notice to
+# stderr rather than silently going unnoticed.
 save-your-tokens = "cli:main"
 save-your-tokens-mcp = "server:main"
 

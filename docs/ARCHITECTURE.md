@@ -38,7 +38,7 @@ Repository
     ↓
 ┌───────────────────────────────────────────┐
 │ Knowledge Base Generator  (generator/)    │
-│   Project → .ai-context/ Markdown         │
+│   Project → .blueprint/ Markdown          │
 │   (12 files, cross-referenced — the       │
 │    project's primary output)              │
 │   write_documents_if_changed() writes     │
@@ -210,7 +210,7 @@ the same one-function-per-concern shape, not a change to this one.
 ### 4. Generator — implemented
 
 **Responsibility:** turn a fully analysed `Project` into an AI-native
-Knowledge Base (`.ai-context/`) — twelve cross-referenced Markdown files.
+Knowledge Base (`.blueprint/`) — twelve cross-referenced Markdown files.
 Never re-scans, re-parses, or re-analyses anything; consumes only
 `analyzer.models.Project` (D-028).
 
@@ -244,6 +244,11 @@ Three layers, one function per file:
   "rules as data" principle as `analyzer/constants.py` (D-006).
 - `writer.py` — the only place that touches disk. Forces LF line endings so
   output is byte-identical across platforms (D-032).
+- `output.py` — `DEFAULT_OUTPUT_DIRNAME` (`.blueprint`) and
+  `default_output_dir()`, the one place the default Knowledge Base
+  location is computed, shared by the CLI, `incremental/` and
+  `mcp_server/`. Also performs the one-time, lossless migration of a
+  pre-rename `.ai-context/` directory (D-053).
 
 `generate_knowledge_base(project) -> dict[str, str]` (in `generator/__init__.py`)
 is pure and side-effect-free; `write_knowledge_base(project, output_dir)`
@@ -329,7 +334,7 @@ already are:
     once anything changed (D-046). Selective re-parsing itself is an
     additive `only=` parameter on the existing Phase 3 functions, not a
     parallel code path (D-045) — one implementation, impossible to drift.
-  - `cache_io.py` — load/save/clear `.ai-context/.cache/cache.json`.
+  - `cache_io.py` — load/save/clear `.blueprint/.cache/cache.json`.
     `CacheStatus` is closed (`MISSING`/`VALID`/`CORRUPTED`/
     `VERSION_MISMATCH`/`TOOL_VERSION_MISMATCH`/`CLEARED`); every non-`VALID`
     status fails closed into a full analysis, never a guess (D-050). The

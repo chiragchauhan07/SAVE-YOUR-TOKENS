@@ -1,4 +1,4 @@
-"""Command-line interface for the Save your Tokens analysis engine.
+"""Command-line interface for the Blueprint analysis engine.
 
 Five commands:
 
@@ -9,27 +9,30 @@ Five commands:
   important files). Prints a summary; exists to exercise and inspect the
   engine, not as the product.
 - ``generate`` — run the same analysis and write the AI-native Knowledge
-  Base (``.ai-context/`` by default) via ``generator``, unconditionally.
+  Base (``.blueprint/`` by default) via ``generator``, unconditionally.
   This is the project's primary output; see ``docs/ARCHITECTURE.md``.
 - ``update`` — incrementally update the Knowledge Base via ``incremental``:
   reuse cached per-file results wherever safe, rewrite only the documents
   whose content actually changed. Produces byte-identical output to
-  ``generate`` (D-044 through D-050) — the only difference is how much
-  work gets skipped. ``--force`` ignores the cache entirely.
+  ``generate`` — the only difference is how much work gets skipped.
+  ``--force`` ignores the cache entirely.
 - ``cache-info`` — inspect the incremental cache without changing anything.
 - ``cache-clear`` — delete the incremental cache.
 
-The MCP server (see ``server.py``) is the primary *interface*, once built.
+The MCP server (see ``server.py``) is the primary *interface*.
+
+Installed as the ``blueprint`` console script (``save-your-tokens`` still
+works as a deprecated alias — see ``pyproject.toml`` and D-053).
 
 Usage:
-    python cli.py scan /path/to/repo
-    python cli.py scan /path/to/repo --json
-    python cli.py generate /path/to/repo
-    python cli.py generate /path/to/repo --output /path/to/output
-    python cli.py update /path/to/repo
-    python cli.py update /path/to/repo --force
-    python cli.py cache-info /path/to/repo
-    python cli.py cache-clear /path/to/repo
+    blueprint scan /path/to/repo
+    blueprint scan /path/to/repo --json
+    blueprint generate /path/to/repo
+    blueprint generate /path/to/repo --output /path/to/output
+    blueprint update /path/to/repo
+    blueprint update /path/to/repo --force
+    blueprint cache-info /path/to/repo
+    blueprint cache-clear /path/to/repo
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ from pathlib import Path
 from analyzer import Detection, Project, __version__, analyze_repository
 from analyzer.serialization import project_to_dict
 from analyzer.utils import human_readable_size
-from generator import write_knowledge_base
+from generator import default_output_dir, write_knowledge_base
 from incremental import (
     CacheInfo,
     ChangeReport,
@@ -58,9 +61,14 @@ _TOP_IMPORTANT_FILES = 10
 #: How many extensions the human-readable summary lists.
 _TOP_EXTENSIONS = 15
 
+#: The pre-rename console script name; still installed as a deprecated
+#: alias (see [project.scripts] in pyproject.toml, D-053).
+_LEGACY_SCRIPT_NAME = "save-your-tokens"
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI. Returns a process exit code."""
+    _warn_if_legacy_invocation()
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -87,6 +95,15 @@ def main(argv: list[str] | None = None) -> int:
     return _run_scan(project, args)
 
 
+def _warn_if_legacy_invocation() -> None:
+    """A one-time deprecation notice when launched via the old script name."""
+    if Path(sys.argv[0]).stem == _LEGACY_SCRIPT_NAME:
+        print(
+            f"warning: '{_LEGACY_SCRIPT_NAME}' is deprecated, use 'blueprint' instead.",
+            file=sys.stderr,
+        )
+
+
 def _run_scan(project: Project, args: argparse.Namespace) -> int:
     if args.json:
         json.dump(project_to_dict(project), sys.stdout, indent=2)
@@ -97,7 +114,7 @@ def _run_scan(project: Project, args: argparse.Namespace) -> int:
 
 
 def _run_generate(project: Project, args: argparse.Namespace) -> int:
-    output_dir = args.output or (args.path / ".ai-context")
+    output_dir = args.output or default_output_dir(args.path)
     written = write_knowledge_base(project, output_dir)
     print(f"Generated {len(written)} files in {output_dir}")
     for path in written:
@@ -140,7 +157,7 @@ def _run_cache_clear(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="save-your-tokens",
+        prog="blueprint",
         description="Deterministic repository analysis for AI coding agents.",
     )
     parser.add_argument("--version", action="version", version=__version__)
@@ -156,13 +173,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     generate = subparsers.add_parser(
-        "generate", help="Generate the .ai-context/ AI Knowledge Base."
+        "generate", help="Generate the .blueprint/ AI Knowledge Base."
     )
     _add_analysis_arguments(generate)
     _add_output_argument(generate)
 
     update = subparsers.add_parser(
-        "update", help="Incrementally update the .ai-context/ Knowledge Base."
+        "update", help="Incrementally update the .blueprint/ Knowledge Base."
     )
     _add_path_argument(update)
     _add_output_argument(update)
@@ -211,7 +228,7 @@ def _add_output_argument(subparser: argparse.ArgumentParser) -> None:
         type=Path,
         default=None,
         metavar="DIR",
-        help="Knowledge Base output directory (default: <path>/.ai-context).",
+        help="Knowledge Base output directory (default: <path>/.blueprint).",
     )
 
 

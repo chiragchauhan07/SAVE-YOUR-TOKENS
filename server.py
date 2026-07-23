@@ -7,7 +7,8 @@ analysis or Knowledge Base generation happens in this module.
 
 Usage:
     python server.py
-    save-your-tokens-mcp     # once installed (see [project.scripts])
+    blueprint-mcp            # once installed (see [project.scripts])
+    save-your-tokens-mcp     # deprecated alias, still installed (D-053)
 
 See docs/ARCHITECTURE.md for the tool surface (analyze_repository,
 repository_summary, generate_knowledge_base, health_check) and

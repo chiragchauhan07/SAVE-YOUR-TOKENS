@@ -25,5 +25,6 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Output of this tool
+# Output of this tool (".ai-context/" before the Blueprint rename)
+.blueprint/
 .ai-context/

@@ -1,7 +1,7 @@
 """Deterministic disk output for the Knowledge Base.
 
 Writes exactly the files it's given, nothing more — never clears or owns
-the whole output directory, so a `.ai-context/` reused for something else
+the whole output directory, so a `.blueprint/` reused for something else
 is not at risk. ``newline="\\n"`` forces LF line endings on every platform;
 without it, Windows would translate ``\\n`` to CRLF on write, making
 generated output depend on the host OS — a determinism violation exactly

@@ -136,7 +136,7 @@ verifying any future package-boundary change.
 ## Phase 4 — AI Knowledge Base Generator ✅
 
 **Goal:** turn a fully analysed `Project` into a deterministic, cross-referenced
-`.ai-context/` Knowledge Base — the project's primary output.
+`.blueprint/` Knowledge Base — the project's primary output.
 
 - [x] `generator/` package: one renderer per output file, a pure
       `generate_knowledge_base()` plus a separate `write_knowledge_base()`
@@ -199,7 +199,9 @@ first production-ready release.
       helpers so the CLI and MCP server share one conversion, not two
       (D-034)
 - [x] Root `server.py` implemented as a thin shim over `mcp_server/`
-- [x] `save-your-tokens-mcp` console script; `mcp` extras dependency group
+- [x] `blueprint-mcp` console script (installed as `save-your-tokens-mcp`
+      at the time; renamed in the Blueprint rebrand — see below); `mcp`
+      extras dependency group
 - [x] 35 new tests: tool registration, every tool's success and error
       paths, sequential-call independence, a real stdio-transport
       subprocess integration test, and a byte-for-byte CLI/MCP output
@@ -231,7 +233,7 @@ first attempt.
 "detect what changed, reuse everything else" — without ever letting a
 stale or corrupted cache produce an incorrect result.
 
-- [x] Persistent cache at `.ai-context/.cache/cache.json`: per-file
+- [x] Persistent cache at `.blueprint/.cache/cache.json`: per-file
       fingerprints (size, mtime, SHA-256 content hash) and every Phase 3
       category — structured metadata only, generated Markdown is never
       cached (D-049)
@@ -290,6 +292,58 @@ install every phase, but nothing has been published yet).
 
 ---
 
+## Rebrand — "Save your Tokens" → Blueprint ✅
+
+**Goal:** the project reached a mature, production-ready state (Phases
+1–6 complete) and is renamed to its canonical name, Blueprint, with zero
+regressions and a smooth migration for anyone already using it.
+
+- [x] Every user-facing occurrence of "Save your Tokens" replaced with
+      "Blueprint" — README, docs, CLI help, MCP descriptions, generated
+      Knowledge Base footer, log messages, package metadata
+- [x] Knowledge Base directory renamed `.ai-context/` → `.blueprint/`, with
+      automatic, lossless, one-time migration of an existing legacy
+      directory at the default location (`generator/output.py`) — never
+      touches a custom `--output`/`output_dir`
+- [x] Incremental cache migrates along with the directory above; the
+      accompanying tool-version bump means any migrated cache is
+      correctly recognised as stale on first use and triggers one full
+      re-analysis, never a partially-correct incremental one, before a
+      fresh valid cache is written (D-050, D-053)
+- [x] CLI console script renamed `save-your-tokens` → `blueprint`,
+      `save-your-tokens-mcp` → `blueprint-mcp`; both old names kept as
+      installed, working, deprecated aliases that print a one-time
+      notice to stderr (invocation detected via `sys.argv[0]`, not a
+      second implementation)
+- [x] `SAVE_YOUR_TOKENS_LOG_LEVEL` renamed `BLUEPRINT_LOG_LEVEL`, with the
+      old name honoured as a deprecated fallback (a warning is logged if
+      only it is set)
+- [x] `pyproject.toml` package renamed `save-your-tokens` → `blueprint`;
+      safe as a plain rename since nothing has been published to PyPI
+      under either name
+- [x] No internal module, package, class or function renamed — only
+      user-facing surface; the engine's dependency rules (D-028, D-041,
+      D-044, D-051) are unchanged
+- [x] 11 new tests: legacy directory migration, no-clobber-of-existing-
+      default, no-op-when-neither-exists, full migrate + stale-cache
+      fallback end-to-end, CLI/MCP legacy-invocation deprecation notices,
+      log-level env var precedence and fallback
+- [x] Full verification: tests, ruff, mypy (regular + strict), a real
+      wheel build, install in a clean virtual environment, `blueprint`
+      and `blueprint-mcp` (and both legacy aliases) exercised end-to-end
+- [x] Documentation: README, CHANGELOG, CLAUDE.md, ARCHITECTURE, ROADMAP,
+      DECISIONS (D-053), MCP_SERVER all updated consistently
+
+**Deliberately excluded:** renaming the GitHub repository itself
+(`chiragchauhan07/SAVE-YOUR-TOKENS` — a separate, higher-blast-radius
+action outside this codebase change), renaming internal packages/modules
+(`analyzer/`, `generator/`, `mcp_server/`, `incremental/`, `cli.py`,
+`server.py` all keep their names — pure implementation detail, no
+user-facing branding value, and renaming them would be unnecessary churn
+for zero benefit).
+
+---
+
 ## Explicitly out of scope for v1
 
 - **Any LLM call in the core.** Determinism is the product.
@@ -301,7 +355,7 @@ install every phase, but nothing has been published yet).
 
 - Optional LLM enrichment as a clearly separated layer
 - Web UI for browsing generated context
-- CI integration that keeps `.ai-context/` current on every commit
+- CI integration that keeps `.blueprint/` current on every commit
 - Language-server integration for richer symbol data
 - Honouring `.gitignore` in the scanner, in addition to the built-in rules
 - Benchmarking incremental analysis against large, real-world repositories

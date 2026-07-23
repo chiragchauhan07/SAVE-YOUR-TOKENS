@@ -28,6 +28,7 @@ from analyzer.caching.cache_io import load_cache
 from analyzer.caching.change_detection import detect_changes
 from analyzer.models import Project
 from generator import generate_knowledge_base
+from generator.output import default_output_dir
 from generator.writer import WriteResult, write_documents_if_changed
 from incremental.models import CacheInfo, ChangePreview, ChangeReport
 
@@ -64,7 +65,10 @@ def preview_changes(
 
     Read-only: detects changes against the cache but never writes a new
     cache or touches the Knowledge Base — for "what changed" queries that
-    shouldn't have side effects.
+    shouldn't have side effects. The one exception is a legacy
+    ``.ai-context/`` directory at the default location, which is renamed to
+    ``.blueprint/`` in place (see ``generator/output.py``) — a lossless
+    rename of pre-existing content, not new writes.
     """
     root = Path(path).expanduser().resolve()
     resolved_output = _resolve_output_dir(root, output_dir)
@@ -134,7 +138,7 @@ def clear_cache(path: str | Path, *, output_dir: str | Path | None = None) -> bo
 
 def _resolve_output_dir(root: Path, output_dir: str | Path | None) -> Path:
     if output_dir is None:
-        return root / ".ai-context"
+        return default_output_dir(root)
     return Path(output_dir).expanduser().resolve()
 
 

@@ -54,7 +54,10 @@ IGNORED_DIRECTORIES: Final[frozenset[str]] = frozenset(
         "htmlcov",
         ".cache",
         ".sass-cache",
-        # This tool's own output
+        # This tool's own output — current name plus the pre-rename name
+        # ("Save your Tokens"), so a repository not yet migrated (see
+        # generator/output.py) still isn't scanned as source.
+        ".blueprint",
         ".ai-context",
     }
 )

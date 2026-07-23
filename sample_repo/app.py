@@ -1,4 +1,4 @@
-"""Fixture Flask application. Not part of the Save your Tokens package."""
+"""Fixture Flask application. Not part of the Blueprint package."""
 
 from flask import Flask, jsonify
 
